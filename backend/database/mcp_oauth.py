@@ -575,7 +575,10 @@ def _build_token_pair_writes(
     token_family_id: Optional[str] = None,
 ) -> Tuple[str, str, Any, OAuthAccessTokenDict, Any, OAuthRefreshTokenDict, Any]:
     now = _now()
-    issued_scopes: List[str] = sorted(set(scopes or grant.get("scopes") or []).intersection(SUPPORTED_SCOPES))
+    if scopes is not None:
+        issued_scopes: List[str] = sorted(set(scopes).intersection(SUPPORTED_SCOPES))
+    else:
+        issued_scopes = sorted(set(grant.get("scopes") or []).intersection(SUPPORTED_SCOPES))
     access_token = _new_access_token()
     refresh_token = _new_refresh_token()
     access_id = str(uuid.uuid4())

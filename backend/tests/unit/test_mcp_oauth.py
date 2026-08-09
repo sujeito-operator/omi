@@ -461,6 +461,26 @@ def test_legacy_omi_client_id_is_not_registered_by_default():
     assert mcp_oauth.get_client('omi') is None
 
 
+def test_issue_token_pair_preserves_an_explicitly_empty_scope_set():
+    """An explicitly empty scopes list must not silently expand to every grant scope.
+
+    When retirement leaves a client with no supported scope, ``_build_token_pair_writes``
+    must not fall back to the full grant scope set (which would be a privilege
+    increase the client can't detect). ``None`` means \"use the grant's scopes\";
+    ``[]`` means \"issue nothing\".
+    """
+    grant = mcp_oauth.create_or_update_grant(
+        'user-empty', 'omi-chatgpt-prod', mcp_oauth.MCP_RESOURCE_URL, ['memories.read', 'conversations.read']
+    )
+    pair = mcp_oauth.issue_token_pair(grant, scopes=[])
+    assert pair['scope'] == ''
+    # The token is valid but carries no scopes — it must not be silently expanded
+    # to the grant's full scope set.
+    validated = mcp_oauth.validate_access_token(pair['access_token'], mcp_oauth.MCP_RESOURCE_URL)
+    assert validated is not None
+    assert validated['scopes'] == []
+
+
 def test_refresh_token_rotates_and_old_refresh_reuse_revokes_grant():
     scopes = ['memories.read']
     grant = mcp_oauth.create_or_update_grant('user-2', 'omi-chatgpt-prod', mcp_oauth.MCP_RESOURCE_URL, scopes)
