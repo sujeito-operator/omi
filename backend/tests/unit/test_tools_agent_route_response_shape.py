@@ -193,6 +193,13 @@ def _reload_module(module_name):
 @pytest.fixture
 def loaded_route_modules(monkeypatch):
     _install_route_stubs(monkeypatch)
+    # Another test file (test_prompt_cache_integration) stubs
+    # utils.retrieval.tool_result_boundaries in sys.modules with a no-op
+    # preserve_chat_memory_tool_result_boundary. The routers re-imported below
+    # import that function by name, so restore the real module first or the
+    # fail-closed memory-output guard silently becomes a no-op under some
+    # collection orders.
+    monkeypatch.delitem(sys.modules, 'utils.retrieval.tool_result_boundaries', raising=False)
     agentic_mod = types.ModuleType('utils.retrieval.agentic')
     agentic_mod.agent_config_context = types.SimpleNamespace(set=MagicMock())
     agentic_mod.CORE_TOOLS = []
