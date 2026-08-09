@@ -155,6 +155,39 @@ def test_execute_sql_serializes_sqlite_rows(tmp_path: Path) -> None:
     }
 
 
+def test_sync_bootstraps_a_fresh_vm_without_a_prior_upload(tmp_path: Path) -> None:
+    """A fresh VM with no uploaded DB must still receive non-screen tables via /sync.
+
+    Closing screen egress may leave a newly provisioned VM with no ``omi.db``
+    upload at all. Incremental sync must initialize the sanitized non-screen
+    schema itself so the remaining context (action_items, memories,
+    transcription_*, ...) can land, while screen/OCR tables stay absent.
+    """
+    app, module = load_app(tmp_path)
+    assert not module.runtime.db_path.is_file()
+    assert module.runtime.db is None
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/sync?token=test-token",
+            json={
+                "table": "memories",
+                "rows": [{"id": "one", "content": "Safari"}],
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["applied"] == 1
+
+    # The non-screen table landed and the screen data tables never got created.
+    # The TestClient lifespan closes the DB on shutdown, so re-open it to inspect.
+    assert module.runtime.open_database()
+    tables = {
+        str(row[0]) for row in module.runtime.db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    }
+    assert "memories" in tables
+    assert not tables & set(module.SCREEN_DATA_TABLES)
+
+
 def test_sync_groups_rows_by_present_columns(tmp_path: Path) -> None:
     app, module = load_app(tmp_path)
     connection = sqlite3.connect(module.runtime.db_path)

@@ -264,6 +264,43 @@ def run_sync(table: str, rows: list[dict[str, Any]]) -> int:
     return applied
 
 
+def bootstrap_sync_schema() -> bool:
+    """Create a sanitized SQLite DB with the non-screen sync tables on a fresh VM.
+
+    Closing screen egress means a newly provisioned or restarted VM may never
+    receive a full ``omi.db`` upload, so the remaining non-screen context
+    (``action_items``, ``memories``, ``transcription_*``, and friends) would have
+    nowhere to land. ``/sync`` only needs the whitelisted tables to exist; the
+    sync writer adds any missing columns via ``ALTER TABLE ... ADD COLUMN``. This
+    creates those tables with a minimal ``id`` column so incremental sync works
+    from an empty machine while screen/OCR tables stay absent.
+
+    Returns:
+        True when the schema was created and opened, False if the DB already
+        existed or could not be created.
+    """
+    if runtime.db is not None:
+        return True
+    if runtime.db_path.is_file():
+        return runtime.open_database()
+    runtime.db_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        connection = sqlite3.connect(runtime.db_path, check_same_thread=False)
+        with runtime.lock:
+            for table in sorted(SYNC_TABLES):
+                connection.execute(f"CREATE TABLE IF NOT EXISTS {quoted(table)} (id TEXT PRIMARY KEY)")
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.commit()
+        connection.close()
+        return runtime.open_database()
+    except sqlite3.Error:
+        try:
+            runtime.db_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False
+
+
 async def upload_database(request: Request) -> tuple[int, int]:
     content_length = int(request.headers.get("content-length", "0"))
     if content_length > MAX_UPLOAD_BYTES:
@@ -623,7 +660,7 @@ async def ping(request: Request) -> dict[str, str]:
 @app.post("/sync")
 async def sync(request: Request) -> dict[str, Any]:
     runtime.require_auth(request)
-    if runtime.db is None:
+    if runtime.db is None and not bootstrap_sync_schema():
         raise HTTPException(status_code=503, detail="Database not loaded. Upload omi.db first.")
     try:
         payload = await request.json()
