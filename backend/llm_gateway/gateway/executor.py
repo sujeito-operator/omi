@@ -254,14 +254,15 @@ async def _execute_route(
     failed_provider_refs: list[ProviderRef] = []
 
     for index, provider_ref in enumerate(refs):
-        provider = provider_registry.provider_for(provider_ref.provider)
+        effective_provider_ref = _provider_ref_for_credentials(provider_ref, credential_context)
+        provider = provider_registry.provider_for(effective_provider_ref.provider)
         if provider is None:
-            error = _unsupported_provider_error(provider_ref, credential_context)
+            error = _unsupported_provider_error(effective_provider_ref, credential_context)
         elif credential_context.mode == CredentialMode.BYOK and not credential_context.has_provider_key(
-            provider_ref.provider
+            effective_provider_ref.provider
         ):
             error = GatewayCredentialFailureError(
-                f'BYOK key is required for provider {provider_ref.provider}',
+                f'BYOK key is required for provider {effective_provider_ref.provider}',
                 failure_class=FailureClass.MISSING_BYOK_KEY,
                 param='credentials',
             )
@@ -270,7 +271,7 @@ async def _execute_route(
                 resolved_route,
                 route,
                 provider,
-                provider_ref,
+                effective_provider_ref,
                 credential_context,
                 attempt_trace=attempt_trace,
                 fallback_reason=current_fallback_reason,
@@ -290,7 +291,7 @@ async def _execute_route(
                 # Cross-route fallback (fallback_reason passed from the caller,
                 # e.g. active→LKG) is always actual regardless of ref identity.
                 distinct_within_route = any(
-                    failed.provider != provider_ref.provider or failed.model != provider_ref.model
+                    failed.provider != effective_provider_ref.provider or failed.model != effective_provider_ref.model
                     for failed in failed_provider_refs
                 )
                 actual_fallback = current_fallback_reason is not None and (
@@ -300,7 +301,7 @@ async def _execute_route(
                     response,
                     resolved_route=resolved_route,
                     route=route,
-                    provider_ref=provider_ref,
+                    provider_ref=effective_provider_ref,
                     fallback_used=actual_fallback,
                     fallback_reason=current_fallback_reason if actual_fallback else None,
                     fallback_from_route_artifact_id=(
@@ -312,7 +313,7 @@ async def _execute_route(
                 )
 
         last_error = error
-        failed_provider_refs.append(provider_ref)
+        failed_provider_refs.append(effective_provider_ref)
         if index == len(refs) - 1 or not _can_try_next_provider(route, error.failure_class):
             raise error
         current_fallback_reason = error.failure_class
@@ -320,6 +321,16 @@ async def _execute_route(
     if last_error is not None:
         raise last_error
     raise GatewayInvalidRouteConfigError(f'route {route.route_artifact_id} has no provider refs')
+
+
+def _provider_ref_for_credentials(provider_ref: ProviderRef, credentials: CredentialContext) -> ProviderRef:
+    if credentials.mode != CredentialMode.BYOK or provider_ref.provider != 'openrouter':
+        return provider_ref
+    if provider_ref.model.startswith('openai/') and credentials.has_provider_key('openai'):
+        return provider_ref.model_copy(
+            update={'provider': 'openai', 'model': provider_ref.model.removeprefix('openai/')}
+        )
+    return provider_ref
 
 
 async def _attempt_provider(
@@ -429,7 +440,10 @@ def _provider_request(
     if resolved_route.validated_request.response_format is not None:
         provider_request['response_format'] = dict(resolved_route.validated_request.response_format)
     provider_request.update(dict(resolved_route.validated_request.forwarded_params))
-    if not provider_ref.model.startswith('gpt-5.6'):
+    model_name = (
+        provider_ref.model.removeprefix('openai/') if provider_ref.provider == 'openrouter' else provider_ref.model
+    )
+    if not model_name.startswith('gpt-5.6'):
         _remove_gpt56_cache_fields(provider_request)
     if apply_budget:
         provider_request, _ = apply_output_budget(provider_request, route.output_budget)
@@ -447,9 +461,12 @@ def _sanitize_openai_chat_completions_request(
     ``none`` are unsupported for ``gpt-5.6-luna`` on ``/v1/chat/completions``.
     Temperature must also stay at the model default (1).
     """
-    if provider_ref.provider != 'openai':
+    if provider_ref.provider == 'openrouter' and provider_ref.model.startswith('openai/'):
+        model = provider_ref.model.removeprefix('openai/')
+    elif provider_ref.provider == 'openai':
+        model = provider_ref.model
+    else:
         return
-    model = provider_ref.model
     if not model.startswith('gpt-5.6'):
         return
 

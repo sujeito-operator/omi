@@ -644,10 +644,14 @@ class TestProviderSafetyGuard:
 class TestAnthropicModelExports:
     """Verify ANTHROPIC_AGENT_MODEL is backed by profile."""
 
-    def test_anthropic_agent_model_matches_profile(self):
+    def test_anthropic_agent_model_matches_profile(self, monkeypatch):
         from utils.llm.clients import ANTHROPIC_AGENT_MODEL, _active_profile
 
-        assert ANTHROPIC_AGENT_MODEL == _active_profile['chat_agent'][0]
+        import utils.llm.clients as clients_mod
+
+        monkeypatch.delenv('OPENROUTER_API_KEY', raising=False)
+        assert clients_mod.get_model('chat_agent') == _active_profile['chat_agent'][0]
+        assert ANTHROPIC_AGENT_MODEL == clients_mod.get_model('chat_agent')
 
     def test_anthropic_agent_model_is_string(self):
         from utils.llm.clients import ANTHROPIC_AGENT_MODEL
@@ -941,6 +945,32 @@ class TestBYOKWrapperArchitecture:
         # OpenRouter feature — always ChatOpenAI
         llm_or = get_llm('wrapped_analysis')
         assert isinstance(llm_or, ChatOpenAI), 'OpenRouter get_llm must return ChatOpenAI'
+
+    def test_gemini_byok_preserves_vendor_route_when_openrouter_is_configured(self, monkeypatch):
+        import utils.llm.clients as clients_mod
+
+        monkeypatch.setenv('OPENROUTER_API_KEY', 'sk-openrouter-test')
+        monkeypatch.setattr(
+            clients_mod,
+            'get_byok_key',
+            lambda provider: 'AIza-gemini-test' if provider == 'gemini' else None,
+        )
+        captured = {}
+
+        def fake_byok_client(model, provider, key, streaming=False, feature=''):
+            captured.update(model=model, provider=provider, key=key, feature=feature)
+            return MagicMock()
+
+        monkeypatch.setattr(clients_mod, '_create_byok_client', fake_byok_client)
+
+        clients_mod.get_llm('followup')
+
+        assert captured == {
+            'model': 'gemini-2.5-flash-lite',
+            'provider': 'gemini',
+            'key': 'AIza-gemini-test',
+            'feature': 'followup',
+        }
 
     def test_no_legacy_llm_medium_or_llm_large(self):
         """Dead legacy instances must not exist in clients module."""

@@ -149,6 +149,17 @@ def test_openai_compatible_provider_applies_base_url_headers_and_google_prefix(m
     assert call['temperature'] == 0.7
 
 
+def test_openrouter_prefixes_openai_models(monkeypatch):
+    FakeChatOpenAI.calls.clear()
+    providers._llm_cache.clear()
+    monkeypatch.setattr(providers, 'ChatOpenAI', FakeChatOpenAI)
+    monkeypatch.setenv('OPENROUTER_API_KEY', 'sk-openrouter')
+
+    providers.get_or_create_openai_compatible_llm('openrouter', 'gpt-5.6-luna')
+
+    assert FakeChatOpenAI.calls[-1]['model'] == 'openai/gpt-5.6-luna'
+
+
 def test_unknown_openai_compatible_provider_fails_loudly():
     with pytest.raises(ValueError, match="Unknown OpenAI-compatible provider"):
         providers.get_or_create_openai_compatible_llm('missing-provider', 'some-model')

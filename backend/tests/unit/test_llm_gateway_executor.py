@@ -86,6 +86,43 @@ async def test_executor_forwards_prompt_parser_request_without_response_format()
     assert 'response_format' not in provider.calls[0].request
 
 
+@pytest.mark.asyncio
+async def test_byok_openrouter_openai_route_uses_forwarded_openai_provider():
+    active_route = active_route_with_fallbacks([]).model_copy(
+        update={'primary': ProviderRef(provider='openrouter', model='openai/gpt-5.6-luna')}
+    )
+    config = config_with_active_route(active_route)
+    resolved = resolve_chat_completion_route(config, valid_request())
+    provider = FakeChatCompletionProvider([fake_success_response(active_route.primary)])
+
+    result = await execute_chat_completion(
+        resolved,
+        build_byok_credential_context(ServiceCaller(name='backend'), {'openai': 'sk-test'}),
+        ProviderRegistry({'openai': provider}),
+    )
+
+    assert result.selected_provider == 'openai'
+    assert provider.calls[0].provider == 'openai'
+    assert provider.calls[0].model == 'gpt-5.6-luna'
+
+
+def test_openrouter_openai_luna_route_sanitizes_gpt56_options():
+    active_route = active_route_with_fallbacks([]).model_copy(
+        update={
+            'primary': ProviderRef(provider='openrouter', model='openai/gpt-5.6-luna'),
+            'provider_options': {'reasoning_effort': 'medium', 'temperature': 0.7},
+        }
+    )
+    config = config_with_active_route(active_route)
+    resolved = resolve_chat_completion_route(config, valid_request())
+
+    provider_request = provider_request_for(resolved, active_route.primary)
+
+    assert provider_request['model'] == 'openai/gpt-5.6-luna'
+    assert provider_request.get('reasoning_effort') == 'medium'
+    assert 'temperature' not in provider_request
+
+
 def test_chat_agent_provider_request_includes_omi_luna_personality():
     config = gateway_config()
     request = {

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Dict, Tuple, Union
 
 from utils.llm.gateway_client import is_auto_lane_id
+from utils.observability.fallback import record_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -221,8 +222,6 @@ def _record_openrouter_fallback(feature: str, direct_provider: str) -> None:
     if feature in _openrouter_fallbacks_recorded:
         return
     _openrouter_fallbacks_recorded.add(feature)
-    from utils.observability.fallback import record_fallback
-
     record_fallback(
         component='llm_gateway',
         from_mode='openrouter',

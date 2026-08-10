@@ -150,6 +150,22 @@ def test_llm_gateway_fake_provider_check_restores_existing_service_tokens(monkey
     assert os.environ["LLM_GATEWAY_SERVICE_TOKEN"] == "existing-legacy-token"
 
 
+def test_llm_gateway_fake_provider_check_tracks_openrouter_route(monkeypatch):
+    module = _load_module()
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-openrouter-test")
+    module.llm_gateway_dependencies.get_gateway_config.cache_clear()
+
+    try:
+        status, summary, details = module.llm_gateway_fake_provider_check(_config(module))
+    finally:
+        module.llm_gateway_dependencies.get_gateway_config.cache_clear()
+
+    assert status == "PASS"
+    assert "fake provider" in summary.lower()
+    assert details["network_or_provider_calls"] is False
+
+
 def test_local_fixture_check_uses_pytest_selection_supported_by_runner(monkeypatch):
     module = _load_module()
     captured = {}

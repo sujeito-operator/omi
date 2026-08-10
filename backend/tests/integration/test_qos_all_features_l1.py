@@ -80,14 +80,18 @@ class TestPremiumAllFeatures:
         if _active_profile_name != 'premium':
             pytest.skip("MODEL_QOS is not premium")
         model = get_model('chat_agent')
-        response = await anthropic_client.messages.create(
-            model=model,
-            max_tokens=50,
-            messages=[{"role": "user", "content": SIMPLE_PROMPT}],
-        )
-        text = response.content[0].text.strip()
+        if get_provider('chat_agent') == 'openrouter':
+            response = get_llm('chat_agent').invoke(SIMPLE_PROMPT)
+            text = response.content.strip()
+        else:
+            response = await anthropic_client.messages.create(
+                model=model,
+                max_tokens=50,
+                messages=[{"role": "user", "content": SIMPLE_PROMPT}],
+            )
+            text = response.content[0].text.strip()
         assert text, f"FAIL chat_agent ({model}) returned empty"
-        print(f"  PASS chat_agent: {model} [anthropic] -> {text[:60]}")
+        print(f"  PASS chat_agent: {model} [{get_provider('chat_agent')}] -> {text[:60]}")
 
     def test_premium_web_search(self):
         """Test web_search via Perplexity."""

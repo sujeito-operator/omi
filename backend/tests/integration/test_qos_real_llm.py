@@ -205,15 +205,18 @@ class TestPremiumAnthropic:
     @pytest.mark.asyncio
     async def test_chat_agent_anthropic(self):
         model = get_model('chat_agent')
-        assert model == 'claude-sonnet-4-6', f"chat_agent should be claude-sonnet-4-6, got {model}"
-        assert model == ANTHROPIC_AGENT_MODEL
-
-        response = await anthropic_client.messages.create(
-            model=model,
-            max_tokens=50,
-            messages=[{"role": "user", "content": SIMPLE_PROMPT}],
-        )
-        text = response.content[0].text.strip()
+        if get_provider('chat_agent') == 'openrouter':
+            response = get_llm('chat_agent').invoke(SIMPLE_PROMPT)
+            text = response.content.strip()
+        else:
+            assert model == 'claude-sonnet-4-6', f"chat_agent should be claude-sonnet-4-6, got {model}"
+            assert model == ANTHROPIC_AGENT_MODEL
+            response = await anthropic_client.messages.create(
+                model=model,
+                max_tokens=50,
+                messages=[{"role": "user", "content": SIMPLE_PROMPT}],
+            )
+            text = response.content[0].text.strip()
         assert text, f"chat_agent ({model}) returned empty response"
         print(f"  chat_agent ({model}): {text[:60]}")
 

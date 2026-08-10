@@ -500,20 +500,15 @@ def get_llm(
             get_active_profile_name(),
         )
 
-    byok_provider = _effective_byok_provider(model, provider)
-    byok_key = get_byok_key(byok_provider)
     byok_profile = get_byok_profile()
+    byok_model, byok_prov = byok_profile.get(feature, (model, provider))
+    byok_prov_eff = _effective_byok_provider(byok_model, byok_prov)
+    byok_key = get_byok_key(byok_prov_eff)
+    if byok_key:
+        logger.debug('BYOK QoS upgrade: feature=%s %s/%s→%s/%s', feature, model, provider, byok_model, byok_prov)
+        model, provider = byok_model, byok_prov
 
-    if byok_key and byok_profile:
-        byok_model, byok_prov = byok_profile.get(feature, (model, provider))
-        byok_prov_eff = _effective_byok_provider(byok_model, byok_prov)
-        byok_key_for_profile = get_byok_key(byok_prov_eff)
-        if byok_key_for_profile:
-            logger.debug('BYOK QoS upgrade: feature=%s %s/%s→%s/%s', feature, model, provider, byok_model, byok_prov)
-            model, provider = byok_model, byok_prov
-            byok_key = byok_key_for_profile
-
-    if byok_key and gateway_feature_mode:
+    if byok_key and gateway_feature_mode and provider not in {'openai', 'gemini', 'openrouter'}:
         result = get_or_create_omi_gateway_llm_for_byok(
             feature_auto_lane_id(feature),
             provider=_effective_byok_provider(model, provider),

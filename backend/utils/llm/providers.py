@@ -63,6 +63,10 @@ def _cache_key(provider: str, model_name: str, streaming: bool, options: Dict[st
 def _api_model_name(provider_config: OpenAICompatibleProviderConfig, model_name: str) -> str:
     if provider_config.prefix_google_models and model_name.startswith('gemini'):
         return f'google/{model_name}'
+    if provider_config.name == 'openrouter' and (
+        model_name.startswith('gpt-') or model_name.startswith(('o1', 'o3', 'o4'))
+    ):
+        return f'openai/{model_name}'
     return model_name
 
 

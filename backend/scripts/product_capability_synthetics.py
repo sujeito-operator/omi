@@ -190,9 +190,15 @@ def llm_gateway_fake_provider_check(config: SyntheticConfig) -> tuple[str, str, 
     for env_var in service_token_env_vars:
         os.environ[env_var] = sentinel_token
 
-    provider = FakeChatCompletionProvider()
+    gateway_config = llm_gateway_dependencies.get_gateway_config()
+    lane = gateway_config.lanes['omi:auto:chat-structured']
+    route = gateway_config.route_artifacts[lane.active_route]
+    providers = {
+        provider_ref.provider: FakeChatCompletionProvider() for provider_ref in [route.primary, *route.fallbacks]
+    }
+    provider = providers[route.primary.provider]
     llm_gateway_app.dependency_overrides[llm_gateway_dependencies.get_provider_registry] = lambda: ProviderRegistry(
-        {"openai": provider}
+        providers
     )
     try:
         response = TestClient(llm_gateway_app).post(

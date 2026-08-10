@@ -14,6 +14,7 @@ def model_config(monkeypatch):
         else:
             monkeypatch.setenv('OPENROUTER_API_KEY', openrouter_key)
         model_config_module._openrouter_fallbacks_recorded.clear()
+        monkeypatch.setattr(model_config_module, 'record_fallback', lambda **_kwargs: None)
         return model_config_module
 
     return _load
@@ -103,9 +104,7 @@ def test_the_fallback_is_recorded_once_per_feature(model_config, monkeypatch):
     calls: list[dict] = []
     monkeypatch.setattr(mc, '_openrouter_fallbacks_recorded', set())
 
-    import utils.observability.fallback as fallback_mod
-
-    monkeypatch.setattr(fallback_mod, 'record_fallback', lambda **kwargs: calls.append(kwargs))
+    monkeypatch.setattr(mc, 'record_fallback', lambda **kwargs: calls.append(kwargs))
 
     for _ in range(3):
         mc.get_model_config('memories')
