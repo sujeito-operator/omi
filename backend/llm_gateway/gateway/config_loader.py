@@ -8,7 +8,7 @@ from typing import Any, TypeAlias, cast
 import yaml
 from pydantic import BaseModel, ConfigDict
 
-from llm_gateway.gateway.schemas import FeatureBundle, GeneratedRouteOverride, LaneConfig, RouteArtifact
+from llm_gateway.gateway.schemas import FeatureBundle, GeneratedRouteOverride, LaneConfig, ProviderRef, RouteArtifact
 from utils.llm.gateway_client import feature_auto_lane_id
 from utils.llm.model_config import (
     get_all_configured_features,
@@ -16,6 +16,7 @@ from utils.llm.model_config import (
     get_provider,
     get_route_options,
     is_structured_output_feature,
+    openrouter_configured,
 )
 
 DEFAULT_CONFIG_DIR = Path(__file__).resolve().parents[1] / 'config'
@@ -51,6 +52,7 @@ def load_gateway_config(config_dir: str | Path | None = None, *, prod_mode: bool
 
     lanes = _parse_lanes([*generated_lane_items, *lane_items])
     route_artifacts = _parse_route_artifacts([*generated_artifact_items, *artifact_items], prod_mode=resolved_prod_mode)
+    route_artifacts = _apply_optional_openrouter_routes(route_artifacts)
     feature_bundles = _parse_feature_bundles([*generated_bundle_items, *bundle_items])
 
     _validate_lane_routes(lanes, route_artifacts)
@@ -209,8 +211,12 @@ def _generated_feature_route_items(
         legacy_model = get_model(feature)
         legacy_provider = get_provider(feature)
         override = route_overrides.get(feature)
-        model = override.primary.model if override is not None else legacy_model
-        provider = override.primary.provider if override is not None else legacy_provider
+        if override is not None and not (openrouter_configured() and legacy_provider == 'openrouter'):
+            model = override.primary.model
+            provider = override.primary.provider
+        else:
+            model = legacy_model
+            provider = legacy_provider
         lane_id = feature_lane_id(feature)
         route_id = f"route.{feature}.model_config.001"
         surface = _surface_for_feature(feature, provider)
@@ -240,7 +246,7 @@ def _generated_feature_route_items(
                 'primary': primary,
                 'fallbacks': [],
                 'provider_options': provider_options,
-                'output_budget': _output_budget_for_feature(feature, provider),
+                'output_budget': _output_budget_for_feature(feature),
                 'timeouts': {'request_ms': 120000 if capabilities['streaming'] else 30000},
                 'retry': {'max_attempts': 1},
                 'capabilities': capabilities,
@@ -280,9 +286,36 @@ def _generated_feature_route_items(
     return lanes, artifacts, bundles
 
 
-def _output_budget_for_feature(feature: str, provider: str) -> dict[str, Any] | None:
+def _apply_optional_openrouter_routes(routes: dict[str, RouteArtifact]) -> dict[str, RouteArtifact]:
+    if not openrouter_configured():
+        return routes
+
+    preferred_models = {
+        'omi:auto:public-shared-conversation-chat': 'gpt-5.6-luna',
+        'omi:auto:chat-structured': 'gpt-5.6-luna',
+    }
+    updated_routes: dict[str, RouteArtifact] = {}
+    for route_id, route in routes.items():
+        model = preferred_models.get(route.lane_id)
+        if model is None:
+            updated_routes[route_id] = route
+            continue
+        updated = route.model_copy(
+            update={
+                'primary': ProviderRef(
+                    provider='openrouter',
+                    model=_provider_model_name('openrouter', model),
+                ),
+                'artifact_digest': None,
+            }
+        )
+        updated_routes[route_id] = updated.model_copy(update={'artifact_digest': updated.content_digest})
+    return updated_routes
+
+
+def _output_budget_for_feature(feature: str) -> dict[str, Any] | None:
     """Keep pilot caps explicit and disabled until an operator enables the experiment."""
-    if feature == 'session_titles' and provider == 'gemini':
+    if feature == 'session_titles':
         return {
             'experiment': 'session_titles',
             'max_completion_tokens': 128,
@@ -333,4 +366,6 @@ def _credential_policy() -> dict[str, Any]:
 def _provider_model_name(provider: str, model: str) -> str:
     if provider == 'openrouter' and model.startswith('gemini'):
         return f'google/{model}'
+    if provider == 'openrouter' and (model.startswith('gpt-') or model.startswith(('o1', 'o3', 'o4'))):
+        return f'openai/{model}'
     return model
