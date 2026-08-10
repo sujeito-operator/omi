@@ -546,7 +546,7 @@ actor AgentVMService {
     var request = URLRequest(url: url)
     request.httpMethod = "POST"
     request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
-    request.timeoutInterval = 30
+    request.timeoutInterval = 600
 
     do {
       let (_, response) = try await URLSession.shared.data(for: request)

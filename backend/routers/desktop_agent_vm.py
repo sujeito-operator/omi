@@ -25,6 +25,7 @@ from database.account_deletion_policy import account_deletion_blocks_access, nor
 from services.agent_vm_lifecycle import (
     AgentVmRelease,
     GceAgentVmClient,
+    SCREEN_PRIVACY_VERSION,
     STATE_SOURCE_REQUIRED_METADATA,
     claim_vm_lease,
     clear_vm_reconcile_lease_fields,
@@ -48,7 +49,7 @@ from utils.subscription import is_trial_paywalled
 logger = logging.getLogger(__name__)
 router = APIRouter()
 _ZONE = "us-central1-a"
-_SCREEN_PRIVACY_VERSION = 1
+_SCREEN_PRIVACY_VERSION = SCREEN_PRIVACY_VERSION
 _GCE_NUMERIC_ID = re.compile(r"[0-9]+")
 _CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 _READY_TIMEOUT_SECONDS = 300

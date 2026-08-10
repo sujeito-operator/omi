@@ -274,7 +274,6 @@ def test_sse_initialize_teaches_every_agent_to_retrieve_full_omi_context_safely(
         'search_conversations',
         'get_people',
         'get_action_items',
-        'get_screen_activity',
     ):
         assert f'`{tool}`' in instructions
     assert 'Use only tools exposed by `tools/list`' in instructions

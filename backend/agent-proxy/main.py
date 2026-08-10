@@ -39,6 +39,7 @@ from utils.executors import (
 from database.account_deletion_policy import account_deletion_blocks_access, normalize_account_deletion_status
 from services.agent_vm_lifecycle import (
     SESSION_LEASE_TTL_SECONDS,
+    SCREEN_PRIVACY_VERSION,
     claim_session_lease,
     heartbeat_session_lease,
     reconcile_requested,
@@ -70,7 +71,7 @@ AGENT_VM_SESSION_LEASES_ENABLED = os.getenv("AGENT_VM_SESSION_LEASES_ENABLED", "
     "true",
     "yes",
 }
-_SCREEN_PRIVACY_VERSION = 1
+_SCREEN_PRIVACY_VERSION = SCREEN_PRIVACY_VERSION
 
 
 def _utc_now() -> datetime:
