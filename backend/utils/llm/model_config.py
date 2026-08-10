@@ -120,7 +120,7 @@ _byok_profile_name = 'byok'
 _byok_profile = MODEL_QOS_PROFILES[_byok_profile_name]
 
 # Features that can't go through get_llm() (non-ChatOpenAI providers).
-_ANTHROPIC_ONLY_FEATURES = {'chat_agent'}
+_ANTHROPIC_ONLY_FEATURES = set()
 _PERPLEXITY_ONLY_FEATURES = {'web_search'}
 
 
@@ -164,14 +164,92 @@ DEFAULT_CONFIG = _DEFAULT_CONFIG
 _AUTO_LANE_FEATURES: Dict[str, str] = {}
 
 
+_OPENROUTER_PREFERRED_MODEL = 'gpt-5.6-luna'
+_OPENROUTER_PREFERRED_FEATURES = frozenset(
+    {
+        'conv_action_items',
+        'conv_structure',
+        'conv_app_result',
+        'conv_app_select',
+        'conv_folder',
+        'conv_discard',
+        'daily_summary',
+        'daily_summary_simple',
+        'external_structure',
+        'memories',
+        'memory_category',
+        'memory_conflict',
+        'memory_l1',
+        'memory_l2',
+        'learnings',
+        'knowledge_graph',
+        'chat_responses',
+        'chat_extraction',
+        'chat_graph',
+        'goals',
+        'goals_advice',
+        'notifications',
+        'proactive_notification',
+        'what_matters_now',
+        'openglass',
+        'app_generator',
+        'persona_clone',
+        'persona_chat',
+        'persona_chat_premium',
+        'smart_glasses',
+        'session_titles',
+        'followup',
+        'onboarding',
+        'app_integration',
+        'trends',
+        'translation',
+        'chat_agent',
+        'wrapped_analysis',
+    }
+)
+_OPENROUTER_PREFERRED_MODELS = {'wrapped_analysis': 'gemini-3-flash-preview'}
+_OPENROUTER_FALLBACK_ROUTES = {'wrapped_analysis': ('gemini-3-flash-preview', 'gemini')}
+
+_openrouter_fallbacks_recorded: set[str] = set()
+
+
+def openrouter_configured() -> bool:
+    return bool(os.getenv('OPENROUTER_API_KEY', '').strip())
+
+
+def _record_openrouter_fallback(feature: str, direct_provider: str) -> None:
+    if feature in _openrouter_fallbacks_recorded:
+        return
+    _openrouter_fallbacks_recorded.add(feature)
+    from utils.observability.fallback import record_fallback
+
+    record_fallback(
+        component='llm_gateway',
+        from_mode='openrouter',
+        to_mode=direct_provider,
+        reason='config_incomplete',
+        outcome='degraded',
+        log=logger,
+    )
+
+
+def _openrouter_preference(feature: str, direct: Tuple[str, str]) -> Tuple[str, str]:
+    if feature not in _OPENROUTER_PREFERRED_FEATURES:
+        return direct
+    if openrouter_configured():
+        return (_OPENROUTER_PREFERRED_MODELS.get(feature, _OPENROUTER_PREFERRED_MODEL), 'openrouter')
+    fallback = _OPENROUTER_FALLBACK_ROUTES.get(feature, direct)
+    _record_openrouter_fallback(feature, fallback[1])
+    return fallback
+
+
 def _get_model_config(feature: str) -> Tuple[str, str]:
     """Get the (model, provider) tuple for a feature. Internal — used by get_llm/get_model/get_provider.
 
     Resolution order: pinned > active profile > fallback.
     """
-    if feature in _PINNED_FEATURES:
-        return _PINNED_FEATURES[feature]
-    return _active_profile.get(feature, _DEFAULT_CONFIG)
+    direct = _PINNED_FEATURES.get(feature, _active_profile.get(feature, _DEFAULT_CONFIG))
+    return _openrouter_preference(feature, direct)
 
 
 def get_model_config(feature: str) -> Tuple[str, str]:
@@ -209,7 +287,7 @@ def get_route_options(feature: str, model: str, provider: str) -> Dict[str, obje
     """Return provider/model construction options for a resolved route."""
 
     options: Dict[str, object] = {}
-    if supports_cache_retention(model):
+    if provider == 'openai' and supports_cache_retention(model):
         options['extra_body'] = {"prompt_cache_retention": "24h"}
     if provider == 'openrouter':
         temperature = _OPENROUTER_TEMPERATURES.get(feature)
