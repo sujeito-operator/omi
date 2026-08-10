@@ -74,6 +74,7 @@ struct DesktopHomeView: View {
   @State private var previousIndexBeforeSettings: Int = 0
   @State private var logoPulse = false
   @State private var lastActivationRefresh = Date.distantPast
+  @State private var didScheduleAgentVMProvisioning = false
   @State private var proactiveMonitoringStartGate = RetryableDelayedStartGate()
   @State private var isWaitingForScreenAnalysisKeys = false
   // Anchor for the proactive-monitoring warmup budget. Captured at view
@@ -450,7 +451,7 @@ struct DesktopHomeView: View {
       enforceMainWindowMinimumSize()
       reportAutomationState()
       // First-run seed so the counter doesn't count the entire backlog as "new".
-      seedTopBarNewSince()
+      if topBarNewSinceRaw.isZero { topBarNewSinceRaw = Date().timeIntervalSince1970 }
     }
     .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
       reportAutomationState()
@@ -627,7 +628,6 @@ struct DesktopHomeView: View {
   private var topBarSinceDate: Date {
     topBarNewSinceRaw > 0 ? Date(timeIntervalSince1970: topBarNewSinceRaw) : Date()
   }
-  private func seedTopBarNewSince() { if topBarNewSinceRaw == 0 { topBarNewSinceRaw = Date().timeIntervalSince1970 } }
   private var currentAppStateLabel: String {
     if authState.isRestoringAuth { return "restoring_auth" }
     if authState.sessionPhase == .recoveryRequired { return "auth_recovery" }
@@ -802,9 +802,24 @@ struct DesktopHomeView: View {
   private func resetSessionScopedStartupWarmups(preserveCrispReadState: Bool) {
     viewModelContainer.resetStartupState()
     didScheduleConversationWarmup = false
+    didScheduleAgentVMProvisioning = false
     proactiveMonitoringStartGate.finishAttempt()
     initialFileIndexingBackfill.releaseReservation()
     CrispManager.shared.stop(preserveReadState: preserveCrispReadState)
+  }
+
+  private func scheduleAgentVMProvisioning() {
+    guard !didScheduleAgentVMProvisioning else { return }
+    didScheduleAgentVMProvisioning = true
+
+    let scheduled = viewModelContainer.scheduleSessionWarmup(
+      id: .agentVMProvisioning,
+      delay: StartupWarmupPolicy.agentVMProvisioningDelay,
+      onCancel: { didScheduleAgentVMProvisioning = false },
+      operation: {
+        await AgentVMService.shared.ensureProvisioned()
+      })
+    if !scheduled { didScheduleAgentVMProvisioning = false }
   }
 
   private func scheduleConversationWarmup() {
