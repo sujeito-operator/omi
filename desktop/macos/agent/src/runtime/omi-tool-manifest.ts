@@ -230,23 +230,6 @@ const swiftToolSurfacePatches: Record<string, OmiToolSurfacePatch> = {
       ],
     ),
   },
-  semantic_search: {
-    surfaces: [],
-    capabilityDoc: doc(
-      "Semantic Search",
-      "Vector similarity search on the user's screen history.",
-      [
-        "Use for fuzzy/conceptual questions about what the user saw, read, or worked on where exact SQL keywords will not work.",
-        "Examples: \"reading about machine learning\", \"working on design mockups\".",
-        "Parameters: query (required), days (default 7), app_filter (optional).",
-      ],
-    ),
-    aliasCapabilityDocs: {},
-    voice: {
-      realtimeDescription:
-        "Search the user's on-screen history — what they saw, read, or worked on — by meaning. Use for 'when was I looking at X', 'find where I read about Y', 'what was I doing in app Z'. Returns matching moments with the app and context. Fast synchronous read. Speak the result.",
-    },
-  },
   get_daily_recap: {
     surfaces: ["desktop_chat", "realtime_voice"],
     capabilityDoc: doc(
@@ -686,34 +669,6 @@ const swiftToolManifestDrafts: OmiToolManifestEntryDraft[] = [
     adapters: {
       ...piAndStdio(),
       "local-agent-api": { advertised: true },
-    },
-  },
-  {
-    name: "semantic_search",
-    label: "Semantic Search",
-    description:
-      "Vector similarity search on the user's screen history. Use for fuzzy/conceptual queries about what the user saw on their computer.",
-    promptSnippet: "semantic_search - Search screen history by meaning",
-    promptGuidelines: ["Prefer semantic_search over execute_sql when the user asks about something they 'saw' or worked on."],
-    latency: "fast local",
-    inputSchema: schema(
-      {
-        query: { type: "string", description: "Natural language search query" },
-        days: { type: "number", description: "Days to search back (default 7)" },
-        app_filter: { type: "string", description: "Filter to a specific app" },
-      },
-      ["query"],
-    ),
-    annotations: readOnlyLocal,
-    timeoutClass: "normal",
-    executor: { kind: "swiftTool" },
-    aliases: [],
-    intendedForAgents: false,
-    runtimePreconditions: ["Requires local Rewind screen-history data."],
-    adapters: {
-      "pi-mono": { advertised: false },
-      "omi-tools-stdio": { advertised: false },
-      "local-agent-api": { advertised: false },
     },
   },
   {
@@ -1414,7 +1369,7 @@ const swiftToolManifestDrafts: OmiToolManifestEntryDraft[] = [
     description: "Fetch a local Rewind screenshot image by screenshot_id.",
     promptSnippet: "get_screenshot - Fetch a local screenshot image",
     latency: "fast local",
-    inputSchema: schema({ screenshot_id: { type: "number", description: "Screenshot ID from search_screen_history or screenshots table" } }, ["screenshot_id"]),
+    inputSchema: schema({ screenshot_id: { type: "number", description: "Screenshot ID from the local screenshots table" } }, ["screenshot_id"]),
     annotations: readOnlyLocal,
     timeoutClass: "normal",
     executor: { kind: "localApiOnly" },
@@ -1608,9 +1563,9 @@ function controlEntry(tool: AgentControlManifestTool): OmiToolManifestEntry {
 }
 
 export const omiToolManifest: OmiToolManifestEntry[] = [
-  ...swiftToolManifest.slice(0, 4),
+  ...swiftToolManifest.slice(0, 3),
   ...agentControlCapabilityManifest.map(controlEntry),
-  ...swiftToolManifest.slice(4),
+  ...swiftToolManifest.slice(3),
 ] satisfies OmiToolManifestEntry[];
 
 /**
@@ -1731,7 +1686,7 @@ export const chatFirstToolManifest: OmiToolManifestEntry[] = [
     inputSchema: schema({
       screenshot_id: {
         type: "number",
-        description: "Screenshot ID returned by search_screen_history or the local screenshots table.",
+        description: "Screenshot ID from the local screenshots table.",
       },
     }, ["screenshot_id"]),
     annotations: localWrite,

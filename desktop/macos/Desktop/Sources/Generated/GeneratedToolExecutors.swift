@@ -3,7 +3,6 @@ import Foundation
 
 enum GeneratedSwiftTool: String, CaseIterable {
   case executeSql = "execute_sql"
-  case semanticSearch = "semantic_search"
   case getDailyRecap = "get_daily_recap"
   case fillCloudConnectorForm = "fill_cloud_connector_form"
   case searchTasks = "search_tasks"
@@ -46,8 +45,8 @@ enum GeneratedSwiftToolExecutor: String {
 
 enum GeneratedToolExecutors {
   static let manifestVersion = 1
-  static let manifestDigest = "sha256:493fc203f36f1147482dc69d538eb768c0d42374258e3e88d967babd3d9bab4d"
-  static let chatFirstManifestDigest = "sha256:0acbdcf7930b9bf3bcff06a28cd33751d0f5161694e70087c58f42a5d2ed4688"
+  static let manifestDigest = "sha256:38380bbba819e48baa1a66ef3eb3a6799388c9d38f2a9798ffa53f08aabb7f4b"
+  static let chatFirstManifestDigest = "sha256:35c79c7ffaad48e6b75f3be9ea82af12a3b28687b985123a06e725aaed2344a2"
 
   static let aliasToCanonical: [String: GeneratedSwiftTool] = [
     "start_file_scan": .scanFiles,
@@ -56,7 +55,6 @@ enum GeneratedToolExecutors {
 
   static let executorByTool: [GeneratedSwiftTool: GeneratedSwiftToolExecutor] = [
     .executeSql: .chatToolExecutor,
-    .semanticSearch: .chatToolExecutor,
     .getDailyRecap: .chatToolExecutor,
     .fillCloudConnectorForm: .chatToolExecutor,
     .searchTasks: .chatToolExecutor,
@@ -122,7 +120,6 @@ enum GeneratedToolExecutors {
   /// Dispatch surface for ChatToolExecutor — chatToolExecutor-bound tools only.
   enum ChatDispatch {
     case executeSql
-    case semanticSearch
     case getDailyRecap
     case fillCloudConnectorForm
     case searchTasks
@@ -160,7 +157,6 @@ enum GeneratedToolExecutors {
     }
     switch tool {
     case .executeSql: return .executeSql
-    case .semanticSearch: return .semanticSearch
     case .getDailyRecap: return .getDailyRecap
     case .fillCloudConnectorForm: return .fillCloudConnectorForm
     case .searchTasks: return .searchTasks

@@ -147,7 +147,7 @@ enum OmiToolManifest {
       properties: [
         "screenshot_id": [
           "type": "number",
-          "description": "Screenshot ID from search_screen_history or screenshots table",
+          "description": "Screenshot ID from the local screenshots table",
         ]
       ],
       required: [

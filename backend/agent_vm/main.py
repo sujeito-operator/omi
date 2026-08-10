@@ -32,7 +32,14 @@ SYNC_TABLES = frozenset(
 )
 SCREEN_DATA_TABLES = frozenset({"screenshots", "focus_sessions", "observations"})
 SCREEN_DATA_TABLE_PATTERN = re.compile(
-    r"(?<![A-Za-z0-9_])(?:screenshots|focus_sessions|observations|ocr_[A-Za-z0-9_]*)(?![A-Za-z0-9_])", re.I
+    r"(?:screenshots(?:_[A-Za-z0-9_]+)?|focus_sessions(?:_[A-Za-z0-9_]+)?|observations(?:_[A-Za-z0-9_]+)?|"
+    r"ocr_[A-Za-z0-9_]*|proactive_extractions(?:_[A-Za-z0-9_]+)?)",
+    re.I,
+)
+SCREEN_DATA_QUERY_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_])(?:screenshots(?:_[A-Za-z0-9_]+)?|focus_sessions(?:_[A-Za-z0-9_]+)?|"
+    r"observations(?:_[A-Za-z0-9_]+)?|ocr_[A-Za-z0-9_]*|proactive_extractions(?:_[A-Za-z0-9_]+)?)(?![A-Za-z0-9_])",
+    re.I,
 )
 IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024 * 1024
@@ -208,7 +215,7 @@ def quoted(value: str) -> str:
 
 
 def is_screen_data_table(name: str) -> bool:
-    return name in SCREEN_DATA_TABLES or name.lower().startswith("ocr_")
+    return bool(SCREEN_DATA_TABLE_PATTERN.fullmatch(name))
 
 
 def screen_data_tables() -> list[str]:
@@ -216,6 +223,17 @@ def screen_data_tables() -> list[str]:
         return []
     rows = runtime.db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     return [str(row[0]) for row in rows if is_screen_data_table(str(row[0]))]
+
+
+def database_screen_data_tables(path: Path) -> list[str]:
+    connection: sqlite3.Connection | None = None
+    try:
+        connection = sqlite3.connect(f"file:{quote(str(path))}?mode=ro", uri=True)
+        rows = connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        return [str(row[0]) for row in rows if is_screen_data_table(str(row[0]))]
+    finally:
+        if connection is not None:
+            connection.close()
 
 
 def json_value(value: Any) -> Any:
@@ -444,6 +462,74 @@ def install_uploaded_database(temporary: Path) -> None:
             raise
 
 
+def purge_screen_data_database() -> int:
+    with runtime.lock:
+        if runtime.db is None:
+            return 0
+        tables = screen_data_tables()
+        deleted = 0
+        for table in tables:
+            try:
+                count = runtime.db.execute(f"SELECT COUNT(*) FROM {quoted(table)}").fetchone()
+            except sqlite3.OperationalError as exc:
+                if "no such table" in str(exc).lower():
+                    continue
+                raise
+            deleted += int(count[0]) if count else 0
+        if not tables:
+            runtime.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            return deleted
+
+        temporary = runtime.db_path.with_suffix(runtime.db_path.suffix + ".purging")
+        previous = runtime.db_path.with_suffix(runtime.db_path.suffix + ".purging-previous")
+        temporary.unlink(missing_ok=True)
+        previous.unlink(missing_ok=True)
+        fts_tables = [table for table in tables if table.lower().endswith("_fts")]
+        fts_shadow_tables = {
+            table for base in fts_tables for table in tables if table.lower().startswith(f"{base.lower()}_")
+        }
+        drop_order = fts_tables + sorted(
+            [table for table in tables if table not in fts_tables and table not in fts_shadow_tables],
+            key=lambda table: table.lower() == "screenshots",
+        )
+        for table in drop_order:
+            try:
+                runtime.db.execute(f"DROP TABLE {quoted(table)}")
+            except sqlite3.OperationalError as exc:
+                if "no such table" not in str(exc).lower():
+                    raise
+        runtime.db.commit()
+        runtime.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        runtime.db.execute("VACUUM INTO ?", (str(temporary),))
+        fsync_file(temporary)
+        runtime.close_database()
+        remove_database_sidecars(runtime.db_path)
+        moved = False
+        try:
+            if runtime.db_path.is_file():
+                runtime.db_path.replace(previous)
+                moved = True
+                fsync_directory(runtime.db_path.parent)
+            temporary.replace(runtime.db_path)
+            fsync_directory(runtime.db_path.parent)
+            if not runtime.open_database():
+                raise RuntimeError("Failed to reopen purged database")
+            fsync_database_files(runtime.db_path)
+            fsync_directory(runtime.db_path.parent)
+            previous.unlink(missing_ok=True)
+        except Exception:
+            runtime.close_database()
+            temporary.unlink(missing_ok=True)
+            if moved and previous.is_file():
+                runtime.db_path.unlink(missing_ok=True)
+                previous.replace(runtime.db_path)
+                fsync_directory(runtime.db_path.parent)
+            if not runtime.open_database():
+                raise RuntimeError("Failed to restore database after purge")
+            raise
+        return deleted
+
+
 async def upload_database(request: Request) -> tuple[int, int]:
     try:
         content_length = int(request.headers.get("content-length", "0"))
@@ -492,6 +578,11 @@ async def upload_database(request: Request) -> tuple[int, int]:
             raise HTTPException(status_code=400, detail="Uploaded database is not valid SQLite") from exc
         if integrity != ["ok"]:
             raise HTTPException(status_code=400, detail="Uploaded database failed SQLite integrity check")
+        try:
+            if await run_thread_operation(database_screen_data_tables, temporary):
+                raise HTTPException(status_code=400, detail="Uploaded database contains screen activity")
+        except sqlite3.Error as exc:
+            raise HTTPException(status_code=400, detail="Uploaded database is not valid SQLite") from exc
 
         await run_thread_operation(install_uploaded_database, temporary)
         runtime.last_activity_at = time.monotonic()
@@ -544,7 +635,7 @@ def execute_sql(query: str) -> str:
         return json.dumps({"error": "Multi-statement queries not allowed"})
     if not upper.lstrip().startswith("SELECT"):
         return json.dumps({"error": "Database is in read-only mode (cloud copy)"})
-    if SCREEN_DATA_TABLE_PATTERN.search(query):
+    if SCREEN_DATA_QUERY_PATTERN.search(query):
         return json.dumps({"error": "Screen activity is unavailable"})
     if not re.search(r"\bLIMIT\b", query, re.I):
         query = query.rstrip().rstrip(";") + " LIMIT 200"
@@ -848,19 +939,10 @@ async def sync(request: Request) -> dict[str, Any]:
 @app.post("/purge-screen-activity")
 async def purge_screen_activity(request: Request) -> dict[str, Any]:
     runtime.require_auth(request)
-    if runtime.db is None:
-        return {"status": "ok", "deleted": 0}
-    deleted = 0
-    with runtime.lock:
-        for table in screen_data_tables():
-            try:
-                cursor = runtime.db.execute(f"DELETE FROM {quoted(table)}")
-            except sqlite3.OperationalError as exc:
-                if "no such table" in str(exc).lower():
-                    continue
-                raise HTTPException(status_code=400, detail="Unable to purge screen activity") from exc
-            deleted += max(cursor.rowcount, 0)
-        runtime.db.commit()
+    try:
+        deleted = await run_thread_operation(purge_screen_data_database)
+    except (OSError, RuntimeError, sqlite3.Error) as exc:
+        raise HTTPException(status_code=400, detail="Unable to purge screen activity") from exc
     runtime.last_activity_at = time.monotonic()
     return {"status": "ok", "deleted": deleted}
 

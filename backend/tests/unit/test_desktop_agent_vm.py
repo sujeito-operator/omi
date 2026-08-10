@@ -66,13 +66,39 @@ def test_vm_publish_records_the_screen_privacy_version():
             },
         )()
     )
-    transaction = type(
-        'Transaction', (), {'set': lambda _self, _ref, payload, **kwargs: writes.append(payload)}
-    )()
+    transaction = type('Transaction', (), {'set': lambda _self, _ref, payload, **kwargs: writes.append(payload)})()
     raw = getattr(desktop_agent_vm._set_vm_if_current_txn, 'to_wrap', desktop_agent_vm._set_vm_if_current_txn)
 
     assert raw(transaction, deletion_ref, user_ref, 'vm', 'token', 'ready', '34.1.2.3', 'zone') is True
     assert writes[0]['agentVm']['screenPrivacyVersion'] == desktop_agent_vm._SCREEN_PRIVACY_VERSION
+
+
+def test_vm_publish_does_not_mark_failed_state_as_screen_private():
+    writes = []
+
+    class Ref:
+        def __init__(self, snapshot):
+            self.snapshot = snapshot
+
+        def get(self, transaction=None):
+            return self.snapshot
+
+    deletion_ref = Ref(type('Snapshot', (), {'exists': False, 'to_dict': lambda self: {}})())
+    user_ref = Ref(
+        type(
+            'Snapshot',
+            (),
+            {
+                'exists': True,
+                'to_dict': lambda self: {'agentVm': {'vmName': 'vm', 'authToken': 'token'}},
+            },
+        )()
+    )
+    transaction = type('Transaction', (), {'set': lambda _self, _ref, payload, **kwargs: writes.append(payload)})()
+    raw = getattr(desktop_agent_vm._set_vm_if_current_txn, 'to_wrap', desktop_agent_vm._set_vm_if_current_txn)
+
+    assert raw(transaction, deletion_ref, user_ref, 'vm', 'token', 'error', None, 'zone') is True
+    assert 'screenPrivacyVersion' not in writes[0]['agentVm']
 
 
 @pytest.mark.asyncio

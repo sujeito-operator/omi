@@ -288,7 +288,8 @@ def _set_vm_if_current_txn(
         if not _GCE_NUMERIC_ID.fullmatch(instance_id):
             raise ValueError("Agent VM instance ID must be numeric")
         next_vm["instanceId"] = instance_id
-    next_vm["screenPrivacyVersion"] = _SCREEN_PRIVACY_VERSION
+    if status == "ready":
+        next_vm["screenPrivacyVersion"] = _SCREEN_PRIVACY_VERSION
     transaction.set(user_ref, {"agentVm": next_vm}, merge=True)
     return True
 

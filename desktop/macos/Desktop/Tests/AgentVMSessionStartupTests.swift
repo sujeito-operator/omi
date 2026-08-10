@@ -14,17 +14,17 @@ private actor SessionStepRecorder {
 /// path, and must not let anything reach the VM before its screen activity is
 /// purged. These drive the real session preparation with injected hooks.
 final class AgentVMSessionStartupTests: XCTestCase {
-  private var ownerFixture: RuntimeOwnerAuthorityTestFixture!
+  private var ownerFixture: RuntimeOwnerAuthorityTestFixture?
   private let ownerID = "agent-vm-session-owner"
 
   override func setUp() async throws {
     try await super.setUp()
     ownerFixture = RuntimeOwnerAuthorityTestFixture()
-    await ownerFixture.establish(authOwnerID: ownerID)
+    await ownerFixture?.establish(authOwnerID: ownerID)
   }
 
   override func tearDown() async throws {
-    await ownerFixture.restore()
+    await ownerFixture?.restore()
     ownerFixture = nil
     try await super.tearDown()
   }

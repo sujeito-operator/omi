@@ -312,10 +312,6 @@ describe("omi tool manifest", () => {
       canonicalName: "execute_sql",
       wasAlias: true,
     });
-    expect(normalizeOmiToolName("omi-tools-stdio", "omi-tools.semantic_search")).toEqual({
-      canonicalName: "semantic_search",
-      wasAlias: true,
-    });
     expect(normalizeOmiToolName("local-agent-api", "search_screen_history")).toEqual({
       canonicalName: "search_screen_history",
       wasAlias: false,
@@ -335,7 +331,7 @@ describe("omi tool manifest", () => {
   it("requires surfaces and capabilityDoc on every manifest entry", () => {
     // spawn_background_agent is the coordinator-RPC-only entrypoint and is
     // deliberately advertised on no agent-facing surface (see sibling test).
-    const internalOnlyTools = new Set(["semantic_search", "spawn_background_agent"]);
+    const internalOnlyTools = new Set(["spawn_background_agent"]);
     for (const tool of omiToolManifest) {
       if (!internalOnlyTools.has(tool.name)) {
         expect(tool.surfaces.length, `${tool.name} surfaces`).toBeGreaterThan(0);

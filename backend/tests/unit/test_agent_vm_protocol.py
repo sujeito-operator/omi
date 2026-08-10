@@ -114,6 +114,27 @@ def test_invalid_database_upload_preserves_open_database(tmp_path: Path) -> None
     assert not module.runtime.db_path.with_suffix(".db.uploading").exists()
 
 
+def test_database_upload_rejects_screen_data(tmp_path: Path) -> None:
+    app, module = load_app(tmp_path)
+    uploaded = tmp_path / "uploaded.db"
+    connection = sqlite3.connect(uploaded)
+    connection.execute("CREATE TABLE screenshots (id TEXT, ocrText TEXT)")
+    connection.execute("INSERT INTO screenshots VALUES ('one', 'secret')")
+    connection.commit()
+    connection.close()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/upload?token=test-token",
+            content=uploaded.read_bytes(),
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Uploaded database contains screen activity"
+    assert not module.runtime.db_path.exists()
+
+
 def test_malformed_database_validation_closes_connection_and_temp_file(tmp_path: Path, monkeypatch) -> None:
     app, module = load_app(tmp_path)
 
@@ -795,12 +816,14 @@ def test_purge_screen_activity_removes_legacy_screen_tables(tmp_path: Path) -> N
     connection.execute("CREATE TABLE observations (id TEXT PRIMARY KEY)")
     connection.execute("CREATE TABLE ocr_texts (id TEXT PRIMARY KEY, text TEXT)")
     connection.execute("CREATE TABLE ocr_occurrences (id TEXT PRIMARY KEY, text_id TEXT)")
+    connection.execute("CREATE TABLE proactive_extractions (id TEXT PRIMARY KEY, content TEXT)")
     connection.execute("CREATE VIRTUAL TABLE ocr_texts_fts USING fts5(text)")
     connection.executemany("INSERT INTO screenshots VALUES (?)", [("s1",), ("s2",)])
     connection.execute("INSERT INTO focus_sessions VALUES ('f1')")
     connection.execute("INSERT INTO observations VALUES ('o1')")
     connection.execute("INSERT INTO ocr_texts VALUES ('t1', 'secret')")
     connection.execute("INSERT INTO ocr_occurrences VALUES ('o1', 't1')")
+    connection.execute("INSERT INTO proactive_extractions VALUES ('p1', 'secret')")
     connection.execute("INSERT INTO ocr_texts_fts VALUES ('secret')")
     connection.commit()
     connection.close()
@@ -812,22 +835,19 @@ def test_purge_screen_activity_removes_legacy_screen_tables(tmp_path: Path) -> N
             json={"table": "screenshots", "rows": [{"id": "s3"}]},
         )
         purge = client.post("/purge-screen-activity?token=test-token")
-        remaining = [
-            module.runtime.db.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
-            for table in ("screenshots", "focus_sessions", "observations")
-        ]
-        ocr_remaining = [
-            module.runtime.db.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
-            for table in ("ocr_texts", "ocr_occurrences", "ocr_texts_fts")
-        ]
+        remaining = {
+            str(row[0])
+            for row in module.runtime.db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        }
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Table 'screenshots' not in sync whitelist"
     assert purge.status_code == 200
     assert purge.json()["status"] == "ok"
-    assert purge.json()["deleted"] >= 7
-    assert remaining == [0, 0, 0]
-    assert ocr_remaining == [0, 0, 0]
+    assert purge.json()["deleted"] >= 8
+    assert not any(module.is_screen_data_table(table) for table in remaining)
+    assert b"secret" not in module.runtime.db_path.read_bytes()
+    assert not module.runtime.db_path.with_name(module.runtime.db_path.name + "-wal").exists()
 
 
 def test_agent_vm_hides_and_rejects_legacy_ocr_tables(tmp_path: Path) -> None:
