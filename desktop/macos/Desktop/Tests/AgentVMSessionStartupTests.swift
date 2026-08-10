@@ -19,7 +19,6 @@ final class AgentVMSessionStartupTests: XCTestCase {
   private let ownerID = "agent-vm-session-owner"
 
   override func setUp() async throws {
-    try await super.setUp()
     ownerFixture = RuntimeOwnerAuthorityTestFixture()
     await ownerFixture?.establish(authOwnerID: ownerID)
   }
@@ -27,7 +26,6 @@ final class AgentVMSessionStartupTests: XCTestCase {
   override func tearDown() async throws {
     await ownerFixture?.restore()
     ownerFixture = nil
-    try await super.tearDown()
   }
 
   private func makeService(
