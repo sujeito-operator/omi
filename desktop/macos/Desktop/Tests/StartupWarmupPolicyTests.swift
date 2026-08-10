@@ -288,7 +288,17 @@ final class StartupWarmupPolicyTests: XCTestCase {
     XCTAssertTrue(source.contains("CrispManager.shared.stop(preserveReadState: preserveCrispReadState)"))
     XCTAssertTrue(source.contains("NSApplication.willTerminateNotification"))
     XCTAssertTrue(source.contains("AgentVMService.shared.ensureProvisioned()"))
+    // The view no longer starts sync directly; AgentVMService owns that step so
+    // it can only run after the VM's screen activity is purged. Static
+    // checker — the behavioral contract lives in AgentVMSessionStartupTests.
     XCTAssertFalse(source.contains("AgentSyncService.shared.start"))
+    let vmServiceSource = try String(
+      contentsOf:
+        testsURL
+        .deletingLastPathComponent()
+        .appendingPathComponent("Sources/AgentVMService.swift"),
+      encoding: .utf8)
+    XCTAssertTrue(vmServiceSource.contains("AgentSyncService.shared.start(vmIP: vmIP, authToken: authToken)"))
   }
 
   @MainActor

@@ -6,6 +6,35 @@ import OmiSupport
 actor AgentVMService {
   static let shared = AgentVMService()
 
+  /// The agent session steps, injectable so the ordering contract (purge screen
+  /// activity before any non-screen sync starts) is testable without a VM.
+  struct SessionHooks: Sendable {
+    let purgeScreenActivity: @Sendable (_ vmIP: String, _ authToken: String) async -> Bool
+    let sendFirebaseToken: @Sendable (_ vmIP: String, _ authToken: String) async -> Void
+    let startNonScreenSync: @Sendable (_ vmIP: String, _ authToken: String) async -> Void
+
+    static let live = SessionHooks(
+      purgeScreenActivity: { vmIP, authToken in
+        await AgentVMService.purgeRemoteScreenActivity(vmIP: vmIP, authToken: authToken)
+      },
+      sendFirebaseToken: { vmIP, authToken in
+        await AgentVMService.sendFirebaseToken(vmIP: vmIP, authToken: authToken)
+      },
+      startNonScreenSync: { vmIP, authToken in
+        await AgentSyncService.shared.start(vmIP: vmIP, authToken: authToken)
+      })
+  }
+
+  private let sessionHooks: SessionHooks
+
+  private init() {
+    sessionHooks = .live
+  }
+
+  init(sessionHooks: SessionHooks) {
+    self.sessionHooks = sessionHooks
+  }
+
   private var isRunning = false
 
   /// Check backend for existing VM — if none exists, run the full pipeline.
@@ -147,10 +176,13 @@ actor AgentVMService {
     return true
   }
 
-  /// Re-upload the database to a VM that lost its data (e.g. after a restart).
-  /// Called by AgentSyncService when it detects databaseReady: false on the VM.
+  /// Full-database upload is retired: the local database can hold screen/OCR
+  /// rows, so shipping it to the VM is exactly the egress this change closes.
+  /// A VM that lost its data now recovers server-side — `/sync` bootstraps the
+  /// sanitized non-screen schema and creates any missing whitelisted table — so
+  /// this recovery hook stays disabled by design.
   func reuploadDatabase(vmIP: String, authToken: String) async -> Bool {
-    log("AgentVMService: Database re-upload is disabled")
+    log("AgentVMService: Database re-upload is disabled; VM recovers its non-screen schema on /sync")
     return false
   }
 
@@ -281,17 +313,23 @@ actor AgentVMService {
     }
   }
 
-  /// Start incremental sync after VM is confirmed ready.
-  private func startAgentSession(vmIP: String, authToken: String) async {
-    guard await purgeRemoteScreenActivity(vmIP: vmIP, authToken: authToken) else {
+  /// Start the agent session after the VM is confirmed ready: purge any screen
+  /// activity the VM still holds, hand it a Firebase token, then start the
+  /// non-screen incremental sync. The sync service owns only the sanitized
+  /// tables (`action_items`, `memories`, `transcription_*`, …) and the VM
+  /// bootstraps that schema on first `/sync`, so no full database upload is
+  /// needed and no screen/OCR row can leave the Mac on this path.
+  func startAgentSession(vmIP: String, authToken: String) async {
+    guard await sessionHooks.purgeScreenActivity(vmIP, authToken) else {
       log("AgentVMService: Refusing to start agent session until VM screen activity is purged")
       return
     }
     // Send Firebase token so the VM can call backend tools
-    await sendFirebaseToken(vmIP: vmIP, authToken: authToken)
+    await sessionHooks.sendFirebaseToken(vmIP, authToken)
+    await sessionHooks.startNonScreenSync(vmIP, authToken)
   }
 
-  private func purgeRemoteScreenActivity(vmIP: String, authToken: String) async -> Bool {
+  private static func purgeRemoteScreenActivity(vmIP: String, authToken: String) async -> Bool {
     guard let url = URL(string: "http://\(vmIP):8080/purge-screen-activity") else { return false }
     var request = URLRequest(url: url)
     request.httpMethod = "POST"
@@ -309,7 +347,7 @@ actor AgentVMService {
   }
 
   /// Send the user's Firebase ID token to the VM so it can call Python backend tools.
-  private func sendFirebaseToken(vmIP: String, authToken: String) async {
+  private static func sendFirebaseToken(vmIP: String, authToken: String) async {
     do {
       let idToken = try await AuthService.shared.getIdToken()
       // Send token both as query param (backward compat) and header (preferred)
