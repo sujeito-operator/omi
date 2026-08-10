@@ -238,7 +238,10 @@ def run_sync(table: str, rows: list[dict[str, Any]]) -> int:
     with runtime.lock:
         existing = {row[1] for row in runtime.db.execute(f"PRAGMA table_info({table_sql})")}
         if not existing:
-            raise ValueError(f"Table '{table}' does not exist")
+            if table not in SYNC_TABLES:
+                raise ValueError(f"Table '{table}' does not exist")
+            runtime.db.execute(f"CREATE TABLE IF NOT EXISTS {table_sql} (id TEXT PRIMARY KEY)")
+            existing = {row[1] for row in runtime.db.execute(f"PRAGMA table_info({table_sql})")}
         for column in {column for columns in groups for column in columns}:
             if column not in existing:
                 runtime.db.execute(f"ALTER TABLE {table_sql} ADD COLUMN {quoted(column)}")

@@ -188,6 +188,43 @@ def test_sync_bootstraps_a_fresh_vm_without_a_prior_upload(tmp_path: Path) -> No
     assert not tables & set(module.SCREEN_DATA_TABLES)
 
 
+def test_sync_creates_a_missing_whitelisted_table_on_a_loaded_database(tmp_path: Path) -> None:
+    """A loaded DB missing one sync table must self-heal instead of failing forever.
+
+    Full database upload is retired with screen egress, so the desktop can no
+    longer repair a partial schema by re-uploading ``omi.db``. ``/sync`` owns
+    that recovery for whitelisted non-screen tables; a non-whitelisted table is
+    still rejected rather than created.
+    """
+    app, module = load_app(tmp_path)
+    connection = sqlite3.connect(module.runtime.db_path)
+    connection.execute("CREATE TABLE memories (id TEXT PRIMARY KEY, content TEXT)")
+    connection.commit()
+    connection.close()
+    assert module.runtime.open_database()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/sync?token=test-token",
+            json={"table": "action_items", "rows": [{"id": "one", "description": "ship"}]},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["applied"] == 1
+
+        rejected = client.post(
+            "/sync?token=test-token",
+            json={"table": "screenshots", "rows": [{"id": "one", "ocrText": "secret"}]},
+        )
+        assert rejected.status_code == 400
+
+    assert module.runtime.open_database()
+    tables = {
+        str(row[0]) for row in module.runtime.db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    }
+    assert "action_items" in tables
+    assert not tables & set(module.SCREEN_DATA_TABLES)
+
+
 def test_sync_groups_rows_by_present_columns(tmp_path: Path) -> None:
     app, module = load_app(tmp_path)
     connection = sqlite3.connect(module.runtime.db_path)
