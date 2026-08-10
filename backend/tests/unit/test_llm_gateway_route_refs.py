@@ -59,8 +59,10 @@ def test_pinned_feature_route_ref_preserves_pinned_route_and_options():
     assert get_provider('fair_use') == 'openai'
 
 
-def test_route_ref_preserves_provider_route_options():
+def test_route_ref_preserves_provider_route_options(monkeypatch):
+    monkeypatch.setenv('OPENROUTER_API_KEY', 'sk-openrouter-test')
     openrouter_ref = get_route_ref('wrapped_analysis')
+    monkeypatch.delenv('OPENROUTER_API_KEY')
     gemini_ref = get_route_ref('followup')
 
     assert isinstance(openrouter_ref, ExplicitRouteRef)

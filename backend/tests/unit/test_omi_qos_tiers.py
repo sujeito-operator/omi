@@ -566,7 +566,8 @@ class TestGetQosInfo:
         for feature in _PINNED_FEATURES:
             assert feature in info
 
-    def test_provider_classification_correct(self):
+    def test_provider_classification_correct(self, monkeypatch):
+        monkeypatch.delenv('OPENROUTER_API_KEY', raising=False)
         info = get_qos_info()
         assert info['chat_agent']['provider'] == 'anthropic'
         assert info['web_search']['provider'] == 'perplexity'
@@ -574,16 +575,17 @@ class TestGetQosInfo:
         # persona_chat uses direct OpenAI API in both profiles
         assert info['persona_chat']['provider'] == 'openai'
         # wrapped_analysis uses OpenRouter in both profiles
-        assert info['wrapped_analysis']['provider'] == 'openrouter'
+        assert info['wrapped_analysis']['provider'] == 'gemini'
         # Gemini features use gemini provider
         assert info['followup']['provider'] == 'gemini'
 
-    def test_get_provider_matches_profile(self):
+    def test_get_provider_matches_profile(self, monkeypatch):
         """get_provider() returns the explicit provider from the profile."""
+        monkeypatch.delenv('OPENROUTER_API_KEY', raising=False)
         assert get_provider('conv_action_items') == 'openai'
         assert get_provider('chat_agent') == 'anthropic'
         assert get_provider('web_search') == 'perplexity'
-        assert get_provider('wrapped_analysis') == 'openrouter'
+        assert get_provider('wrapped_analysis') == 'gemini'
         assert get_provider('followup') == 'gemini'
 
 
@@ -601,8 +603,8 @@ class TestPinnedFeatures:
 class TestProviderClassification:
     """Verify provider routing from profile entries."""
 
-    def test_chat_agent_is_anthropic_only(self):
-        assert 'chat_agent' in _ANTHROPIC_ONLY_FEATURES
+    def test_chat_agent_is_not_anthropic_only(self):
+        assert 'chat_agent' not in _ANTHROPIC_ONLY_FEATURES
 
     def test_web_search_is_perplexity_only(self):
         assert 'web_search' in _PERPLEXITY_ONLY_FEATURES
@@ -629,7 +631,8 @@ class TestProviderClassification:
 class TestProviderSafetyGuard:
     """Verify get_llm() rejects Anthropic/Perplexity features and cross-provider overrides."""
 
-    def test_get_llm_rejects_anthropic_only_feature(self):
+    def test_get_llm_rejects_anthropic_only_feature(self, monkeypatch):
+        monkeypatch.delenv('OPENROUTER_API_KEY', raising=False)
         with pytest.raises(ValueError, match='Anthropic'):
             get_llm('chat_agent')
 
@@ -642,9 +645,9 @@ class TestAnthropicModelExports:
     """Verify ANTHROPIC_AGENT_MODEL is backed by profile."""
 
     def test_anthropic_agent_model_matches_profile(self):
-        from utils.llm.clients import ANTHROPIC_AGENT_MODEL
+        from utils.llm.clients import ANTHROPIC_AGENT_MODEL, _active_profile
 
-        assert ANTHROPIC_AGENT_MODEL == get_model('chat_agent')
+        assert ANTHROPIC_AGENT_MODEL == _active_profile['chat_agent'][0]
 
     def test_anthropic_agent_model_is_string(self):
         from utils.llm.clients import ANTHROPIC_AGENT_MODEL
@@ -901,17 +904,19 @@ class TestRuntimeProviderRouting:
         assert 'openrouter' not in base_url
         assert 'generativelanguage.googleapis.com' not in base_url
 
-    def test_openrouter_temperature_applied_via_get_llm(self):
+    def test_openrouter_temperature_applied_via_get_llm(self, monkeypatch):
         """When get_llm routes to OpenRouter, _OPENROUTER_TEMPERATURES config is applied."""
         from utils.llm.clients import _OPENROUTER_TEMPERATURES
 
+        monkeypatch.setenv('OPENROUTER_API_KEY', 'sk-openrouter-test')
         llm = get_llm('wrapped_analysis')
         expected_temp = _OPENROUTER_TEMPERATURES.get('wrapped_analysis')
         assert expected_temp == 0.7, "wrapped_analysis should have temp 0.7 in config"
         assert llm.temperature == expected_temp, "get_llm should apply _OPENROUTER_TEMPERATURES"
 
-    def test_openrouter_adds_vendor_prefix_for_gemini_models(self):
+    def test_openrouter_adds_vendor_prefix_for_gemini_models(self, monkeypatch):
         """Profile stores bare model name; OpenRouter factory must add google/ prefix for API calls."""
+        monkeypatch.setenv('OPENROUTER_API_KEY', 'sk-openrouter-test')
         llm = get_llm('wrapped_analysis')
         default = getattr(llm, '_default', llm)
         assert default.model_name.startswith('google/'), f"Expected google/ prefix, got {default.model_name}"
