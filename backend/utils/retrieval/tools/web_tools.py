@@ -204,17 +204,10 @@ _MAX_CONTENT_CHARS = 8000
 _MAX_BODY_BYTES = 512 * 1024  # cap before HTML parsing
 _MAX_REDIRECTS = 5
 
-# RFC-1918, loopback, link-local (incl. cloud metadata), carrier-grade NAT, IPv6 private
-_PRIVATE_NETWORKS = [
-    ipaddress.ip_network('127.0.0.0/8'),
-    ipaddress.ip_network('10.0.0.0/8'),
-    ipaddress.ip_network('172.16.0.0/12'),
-    ipaddress.ip_network('192.168.0.0/16'),
-    ipaddress.ip_network('169.254.0.0/16'),
+# Carrier-grade NAT is globally routable per `ipaddress` on some Python versions but is
+# an internal transit range for this egress boundary, so it is denied explicitly.
+_EXTRA_DENIED_NETWORKS = [
     ipaddress.ip_network('100.64.0.0/10'),
-    ipaddress.ip_network('::1/128'),
-    ipaddress.ip_network('fe80::/10'),
-    ipaddress.ip_network('fc00::/7'),
 ]
 
 _PARSEABLE_TYPES = ('text/html', 'text/plain', 'application/xhtml+xml', 'application/xml')
@@ -324,22 +317,48 @@ def _extract_json_ld(html: str) -> str:
     return '\n'.join(lines)
 
 
-def _is_private_ip(ip_str: str) -> bool:
+def _unwrap_embedded_ipv4(ip: Any) -> Any:
+    """Return the embedded IPv4 address for mapped/6to4/Teredo IPv6 forms, else *ip*."""
+    for attr in ('ipv4_mapped', 'sixtofour'):
+        embedded = getattr(ip, attr, None)
+        if embedded is not None:
+            return embedded
+    teredo = getattr(ip, 'teredo', None)
+    if teredo is not None:
+        return teredo[1]
+    return ip
+
+
+def _is_disallowed_ip(ip_str: str) -> bool:
+    """
+    Fail closed for every destination that is not a globally routable unicast address.
+
+    Denylisting individual ranges leaked reserved destinations (``0.0.0.0``, ``::``,
+    multicast, TEST-NET, benchmarking, broadcast). This allowlists global unicast only,
+    so any future or unenumerated special-use range is blocked by default.
+    """
     try:
-        ip = ipaddress.ip_address(ip_str)
-        return any(ip in net for net in _PRIVATE_NETWORKS)
+        ip = _unwrap_embedded_ipv4(ipaddress.ip_address(ip_str))
     except ValueError:
         return True  # unparseable → treat as blocked
 
+    if any(ip in net for net in _EXTRA_DENIED_NETWORKS if net.version == ip.version):
+        return True
+    if ip.is_unspecified or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
+        return True
+    if ip.is_private:
+        return True
+    return not ip.is_global
+
 
 async def _hostname_is_public(hostname: str) -> bool:
-    """Resolve hostname and return True only if every IP is a public address."""
+    """Resolve hostname and return True only if every IP is globally routable."""
     try:
         loop = asyncio.get_running_loop()
         results = await loop.getaddrinfo(hostname, None)
         if not results:
             return False
-        return not any(_is_private_ip(r[4][0]) for r in results)
+        return not any(_is_disallowed_ip(r[4][0]) for r in results)
     except Exception:
         return False
 

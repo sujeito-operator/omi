@@ -1,5 +1,6 @@
 """Tests for fetch_url_tool per-turn URL allowlist (prompt scoping + runtime enforcement)."""
 
+import socket
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
@@ -13,6 +14,8 @@ from utils.retrieval.agentic import (
 )
 from utils.retrieval.tools.web_tools import (
     URL_NOT_ALLOWLISTED_MESSAGE,
+    _hostname_is_public,
+    _is_disallowed_ip,
     extract_urls_from_text,
     extract_user_turn_urls,
     fetch_url_tool,
@@ -320,3 +323,134 @@ class TestRuntimeEnforcement:
         assert client.urls == [start, target]
         assert 'Content from' in result
         assert 'Hello' in result
+
+
+# Destinations that are not globally routable unicast. Each must fail closed at the
+# egress guard; the hand-written private-range denylist let most of these through.
+NON_GLOBAL_DESTINATIONS = [
+    '0.0.0.0',
+    '255.255.255.255',
+    '198.18.0.1',
+    '224.0.0.1',
+    '192.0.2.1',
+    '203.0.113.9',
+    '240.0.0.1',
+    '127.0.0.1',
+    '169.254.169.254',
+    '10.0.0.1',
+    '172.16.0.1',
+    '192.168.1.1',
+    '100.64.0.1',
+    '::',
+    '::1',
+    'ff02::1',
+    'fe80::1',
+    'fc00::1',
+    '2001:db8::1',
+    '::ffff:127.0.0.1',
+    '::ffff:169.254.169.254',
+]
+
+GLOBAL_DESTINATIONS = ['8.8.8.8', '93.184.216.34', '2606:4700:4700::1111']
+
+
+def _fake_getaddrinfo(address: str):
+    family = socket.AF_INET6 if ':' in address else socket.AF_INET
+    sockaddr = (address, 0, 0, 0) if family == socket.AF_INET6 else (address, 0)
+
+    def _resolver(host, port, *args, **kwargs):
+        return [(family, socket.SOCK_STREAM, socket.IPPROTO_TCP, '', sockaddr)]
+
+    return _resolver
+
+
+class _RecordingClient:
+    """Stand-in HTTP client that records any request the guard failed to stop."""
+
+    def __init__(self):
+        self.urls = []
+
+    def stream(self, method, url, **kwargs):
+        self.urls.append(url)
+        raise AssertionError(f'egress guard allowed a request to {url}')
+
+
+class TestEgressAddressBounds:
+    @pytest.mark.parametrize('address', NON_GLOBAL_DESTINATIONS)
+    def test_non_global_addresses_are_blocked(self, address):
+        assert _is_disallowed_ip(address) is True
+
+    @pytest.mark.parametrize('address', GLOBAL_DESTINATIONS)
+    def test_global_addresses_are_allowed(self, address):
+        assert _is_disallowed_ip(address) is False
+
+    def test_unparseable_address_is_blocked(self):
+        assert _is_disallowed_ip('not-an-ip') is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('address', NON_GLOBAL_DESTINATIONS)
+    async def test_hostname_resolving_to_non_global_address_is_not_public(self, address):
+        with patch.object(socket, 'getaddrinfo', _fake_getaddrinfo(address)):
+            assert await _hostname_is_public('reserved.example') is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('address', ['0.0.0.0', '198.18.0.1', '224.0.0.1', '255.255.255.255', '::', 'ff02::1'])
+    async def test_fetch_url_tool_refuses_reserved_destination_without_issuing_request(self, address):
+        """An allowlisted URL whose host resolves to a reserved address must never be fetched."""
+        url = 'https://reserved.example/page'
+        config = RunnableConfig(configurable={'user_provided_urls': [url]})
+        client = _RecordingClient()
+
+        with (
+            patch('utils.retrieval.tools.web_tools.get_web_fetch_client', return_value=client),
+            patch.object(socket, 'getaddrinfo', _fake_getaddrinfo(address)),
+        ):
+            result = await fetch_url_tool.ainvoke({'url': url}, config=config)
+
+        assert client.urls == []
+        assert 'private or reserved address' in result
+
+    @pytest.mark.asyncio
+    async def test_redirect_to_reserved_destination_is_blocked_before_second_request(self):
+        """A same-host redirect passes the allowlist but must still fail the address guard."""
+        start = 'https://trusted.example/short'
+        target = 'https://trusted.example/internal'
+        config = RunnableConfig(configurable={'user_provided_urls': [start]})
+
+        class _FakeResponse:
+            def __init__(self):
+                self.status_code = 302
+                self.headers = {'location': target}
+
+            async def aiter_bytes(self, chunk_size=8192):
+                if False:
+                    yield b''
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+        class _FakeClient:
+            def __init__(self):
+                self.urls = []
+
+            def stream(self, method, url, **kwargs):
+                self.urls.append(url)
+                return _FakeResponse()
+
+        client = _FakeClient()
+        resolved = iter(['93.184.216.34', '169.254.169.254'])
+
+        def _resolver(host, port, *args, **kwargs):
+            return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, '', (next(resolved), 0))]
+
+        with (
+            patch('utils.retrieval.tools.web_tools.get_web_fetch_client', return_value=client),
+            patch.object(socket, 'getaddrinfo', _resolver),
+        ):
+            result = await fetch_url_tool.ainvoke({'url': start}, config=config)
+
+        assert client.urls == [start]
+        assert 'private or reserved address' in result
