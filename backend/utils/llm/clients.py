@@ -508,7 +508,7 @@ def get_llm(
         logger.debug('BYOK QoS upgrade: feature=%s %s/%s→%s/%s', feature, model, provider, byok_model, byok_prov)
         model, provider = byok_model, byok_prov
 
-    if byok_key and gateway_feature_mode and provider not in {'openai', 'gemini', 'openrouter'}:
+    if byok_key and gateway_feature_mode:
         result = get_or_create_omi_gateway_llm_for_byok(
             feature_auto_lane_id(feature),
             provider=_effective_byok_provider(model, provider),
