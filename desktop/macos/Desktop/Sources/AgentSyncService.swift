@@ -208,8 +208,10 @@ actor AgentSyncService {
     let stopGeneration = syncGeneration
     let wasRunning = isRunning
     isRunning = false
-    syncTask?.cancel()
+    let task = syncTask
+    task?.cancel()
     syncTask = nil
+    await task?.value
     guard wasRunning else { return }
     if flushPendingChanges {
       log("AgentSync: stopping — flushing final changes")
@@ -372,9 +374,10 @@ actor AgentSyncService {
       return
     }
 
-    guard let url = URL(string: "http://\(vmIP):8080/health") else { return }
+    guard let url = URL(string: "http://\(vmIP):8080/health?token=\(authToken)") else { return }
     do {
       var request = URLRequest(url: url)
+      request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
       request.timeoutInterval = 15
       let (data, response) = try await networkHooks.dataForRequest(request)
       guard isCurrent(generation: generation, ownerID: ownerID, vmIP: vmIP) else { return }

@@ -246,12 +246,23 @@ actor OCREmbeddingService {
 
   /// Search for screenshots similar to a query using disk-based vector search.
   /// Reads screenshot embedding BLOBs in batches, computes cosine similarity via vDSP.
+  /// How many stored embeddings one semantic search will compare against.
+  ///
+  /// The comparison is a linear scan — every blob is read and dotted with the query — so the cost
+  /// of an unbounded range is the size of the capture history, which is now allowed to be
+  /// unlimited. At 768 dimensions a blob is ~3 KB, so this budget is roughly 60 MB read and 20,000
+  /// dot products: milliseconds of work and bounded memory, regardless of how many months the user
+  /// has kept. `readEmbeddingBatch` returns newest-first, so spending the budget means comparing
+  /// against the most recent frames rather than an arbitrary slice.
+  static let defaultEmbeddingScanBudget = 20_000
+
   func searchSimilar(
     query: String,
-    startDate: Date,
-    endDate: Date,
+    startDate: Date? = nil,
+    endDate: Date? = nil,
     appFilter: String? = nil,
-    topK: Int = 50
+    topK: Int = 50,
+    maxScannedEmbeddings: Int = defaultEmbeddingScanBudget
   ) async throws -> [(screenshotId: Int64, similarity: Float)] {
     // Flush any pending embeddings before searching so recent screenshots are findable
     await flushPendingEmbeddings()
