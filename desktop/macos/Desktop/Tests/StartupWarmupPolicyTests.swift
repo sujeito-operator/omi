@@ -17,6 +17,13 @@ final class StartupWarmupPolicyTests: XCTestCase {
     )
   }
 
+  func testAgentVMProvisioningWaitsUntilAfterDeferredWarmupStarts() {
+    XCTAssertGreaterThan(
+      StartupWarmupPolicy.agentVMProvisioningDelay,
+      StartupWarmupPolicy.deferredWarmupDelay
+    )
+  }
+
   func testProactiveAssistantsWaitUntilAfterDeferredWarmupStarts() {
     XCTAssertGreaterThan(
       StartupWarmupPolicy.proactiveAssistantsStartDelay,
@@ -292,13 +299,6 @@ final class StartupWarmupPolicyTests: XCTestCase {
     // it can only run after the VM's screen activity is purged. Static
     // checker — the behavioral contract lives in AgentVMSessionStartupTests.
     XCTAssertFalse(source.contains("AgentSyncService.shared.start"))
-    let vmServiceSource = try String(
-      contentsOf:
-        testsURL
-        .deletingLastPathComponent()
-        .appendingPathComponent("Sources/AgentVMService.swift"),
-      encoding: .utf8)
-    XCTAssertTrue(vmServiceSource.contains("AgentSyncService.shared.start(vmIP: vmIP, authToken: authToken)"))
   }
 
   @MainActor

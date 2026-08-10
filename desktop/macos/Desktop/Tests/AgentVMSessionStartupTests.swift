@@ -13,6 +13,7 @@ private actor SessionStepRecorder {
 /// Closing screen egress must not disconnect the sanitized non-screen context
 /// path, and must not let anything reach the VM before its screen activity is
 /// purged. These drive the real session preparation with injected hooks.
+@MainActor
 final class AgentVMSessionStartupTests: XCTestCase {
   private var ownerFixture: RuntimeOwnerAuthorityTestFixture?
   private let ownerID = "agent-vm-session-owner"
