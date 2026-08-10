@@ -850,6 +850,29 @@ def test_purge_screen_activity_removes_legacy_screen_tables(tmp_path: Path) -> N
     assert not module.runtime.db_path.with_name(module.runtime.db_path.name + "-wal").exists()
 
 
+def test_purge_screen_activity_removes_partial_vacuum_on_fsync_failure(tmp_path: Path, monkeypatch) -> None:
+    app, module = load_app(tmp_path)
+    connection = sqlite3.connect(module.runtime.db_path)
+    connection.execute("CREATE TABLE screenshots (id TEXT PRIMARY KEY)")
+    connection.execute("INSERT INTO screenshots VALUES ('s1')")
+    connection.commit()
+    connection.close()
+    assert module.runtime.open_database()
+
+    def fail_fsync(_path: Path) -> None:
+        raise OSError("fsync failed")
+
+    monkeypatch.setattr(module, "fsync_file", fail_fsync)
+
+    with TestClient(app) as client:
+        response = client.post("/purge-screen-activity?token=test-token")
+
+    temporary = module.runtime.db_path.with_suffix(module.runtime.db_path.suffix + ".purging")
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Unable to purge screen activity"
+    assert not temporary.exists()
+
+
 def test_agent_vm_hides_and_rejects_legacy_ocr_tables(tmp_path: Path) -> None:
     _, module = load_app(tmp_path)
     connection = sqlite3.connect(module.runtime.db_path)

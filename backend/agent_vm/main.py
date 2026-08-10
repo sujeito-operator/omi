@@ -500,8 +500,12 @@ def purge_screen_data_database() -> int:
                     raise
         runtime.db.commit()
         runtime.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        runtime.db.execute("VACUUM INTO ?", (str(temporary),))
-        fsync_file(temporary)
+        try:
+            runtime.db.execute("VACUUM INTO ?", (str(temporary),))
+            fsync_file(temporary)
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            raise
         runtime.close_database()
         remove_database_sidecars(runtime.db_path)
         moved = False
