@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 
-from utils.executors import db_executor, postprocess_executor
+from utils.executors import postprocess_executor
 from utils.mcp_data import date_only_to_utc_epoch
 
 from fastapi import APIRouter, HTTPException, Depends
@@ -21,7 +21,6 @@ from firebase_admin import auth as firebase_auth
 
 # from database.redis_db import get_filter_category_items
 # from database.vector_db import query_vectors_by_metadata
-from database.vector_db import upsert_memory_vector, delete_memory_vector
 import database.vector_db as vector_db
 from models.memories import MemoryDB, Memory, MemoryCategory
 from models.conversation_enums import CategoryEnum
@@ -33,11 +32,10 @@ from utils.conversations.mcp_transcript_search import (
 )
 from utils.apps import update_personas_async
 from utils.llm.memories import identify_category_for_memory
-from utils.memory.canonical_memory_adapter import _read_canonical_memory_item, memory_item_to_memorydb
 from utils.memory.memory_service import MemoryService, fetch_memory_dict
 from testing.parity_pack_v0.live_capture import capture_memory_write
 from utils.memory.memory_system import MemorySystem
-from utils.memory.surface_routing import memorydb_list_with_locked_preview, pin_memory_system
+from utils.memory.surface_routing import pin_memory_system
 from dependencies import (
     get_uid_from_mcp_api_key,
     get_current_user_id,
@@ -48,7 +46,6 @@ from utils.other.endpoints import with_rate_limit, with_rate_limit_context
 from utils.log_sanitizer import sanitize_pii
 from utils.memory.default_read_rollout import (
     MemoryReadDecision,
-    guard_legacy_memory_write,
     read_default_read_rollout,
 )
 from utils.memory.product_authorization import (
