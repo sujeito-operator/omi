@@ -133,6 +133,11 @@ tracker_mod.track_usage = MagicMock()
 gateway_mod = _stub_module("utils.llm.gateway_client")
 gateway_mod.invoke_chat_structured_gateway = MagicMock(return_value=None)
 gateway_mod.is_auto_lane_id = lambda value: isinstance(value, str) and value.startswith('omi:auto:')
+# agentic.py resolves the Perplexity tool's args_schema lazily, so utils.retrieval.tools.
+# perplexity_tools is imported under this harness and needs the gateway surface it names.
+gateway_mod.feature_auto_lane_id = lambda feature: f"omi:auto:{feature.replace('_', '-')}"
+gateway_mod.get_llm_gateway_base_url = MagicMock(return_value='https://llm-gateway.test')
+gateway_mod.llm_gateway_headers = MagicMock(return_value={})
 gateway_mod.record_chat_extraction_gateway_result = MagicMock()
 gateway_mod.raise_if_gateway_feature_mode_blocks_direct_model_surface = MagicMock()
 
@@ -162,11 +167,11 @@ def _passthrough_tool(target=None, **_kwargs):
 
 
 langchain_tools_mod = _stub_module("langchain_core.tools")
-
-
-@pytest.fixture(autouse=True)
-def _patch_langchain_tool(monkeypatch):
-    monkeypatch.setattr(langchain_tools_mod, "tool", _passthrough_tool, raising=False)
+# Installed on the stub itself rather than through an autouse fixture. The fixture only ran
+# for tests in this file, so any other module that imports _get_agentic_module from here
+# (test_chat_agent_provider_retry.py) reached web_tools' import-time `from langchain_core.tools
+# import tool` against a bare stub and failed collection with ImportError.
+langchain_tools_mod.tool = _passthrough_tool
 
 
 # --- LLMs/memory stubs ---
