@@ -66,7 +66,7 @@ async def _find_session(email: str, website_id: str, headers: dict[str, str]) ->
 
 
 @router.post("/v1/screen-activity/sync")
-async def retire_screen_activity_sync(uid: str = Depends(get_current_user_uid)) -> dict[str, Any]:
+def retire_screen_activity_sync(uid: str = Depends(get_current_user_uid)) -> dict[str, Any]:
     """Tombstone for the retired screen-activity sync route. Stores nothing, ever.
 
     LIFECYCLE: one-time
