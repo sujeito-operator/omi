@@ -191,6 +191,15 @@ export interface AgentKeepaliveResponse {
   reason?: string | null;
 }
 
+export interface AgentPillTitleRequest {
+  query: string;
+}
+
+export interface AgentPillTitleResponse {
+  ack?: string;
+  title?: string;
+}
+
 export interface AgentToolSchema {
   description: string;
   name: string;
@@ -4031,6 +4040,8 @@ export interface OmiApiSchemas {
   "AdviceAssistantSettings": AdviceAssistantSettings;
   "AdviceResponse": AdviceResponse;
   "AgentKeepaliveResponse": AgentKeepaliveResponse;
+  "AgentPillTitleRequest": AgentPillTitleRequest;
+  "AgentPillTitleResponse": AgentPillTitleResponse;
   "AgentToolSchema": AgentToolSchema;
   "AgentToolsResponse": AgentToolsResponse;
   "AgentVmInfo": AgentVmInfo;
@@ -5883,6 +5894,16 @@ export interface OmiApiPaths {
         "200": ConversationStatusResponse;
         "401": void;
         "404": void;
+        "422": HTTPValidationError;
+      };
+    };
+  };
+  "/v1/desktop/agent-pill/title": {
+    post: {
+      operationId: "generate_agent_pill_title_v1_desktop_agent_pill_title_post";
+      responses: {
+        "200": AgentPillTitleResponse;
+        "401": void;
         "422": HTTPValidationError;
       };
     };
@@ -11213,6 +11234,27 @@ export async function set_conversation_visibility_v1_conversations__conversation
   return _res.status === 204 ? (undefined as any) : await _res.json();
 }
 
+export async function generate_agent_pill_title_v1_desktop_agent_pill_title_post(header: { authorization?: string, X_App_Platform?: string, X_Device_Id_Hash?: string, X_App_Version?: string }, body: AgentPillTitleRequest, init?: OmiApiClientInit): Promise<AgentPillTitleResponse> {
+  const _base = init?.baseURL ?? "";
+  const _path = `/v1/desktop/agent-pill/title`;
+  const _search = "";
+  const _res = await fetch(`${_base}${_path}${_search}`, {
+    method: "POST",
+    headers: {
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+      ...(init?.token ? { Authorization: `Bearer ${init.token}` } : {}),
+      ...init?.headers,
+      ...(header.authorization !== undefined ? { "authorization": String(header.authorization) } : {}),
+      ...(header.X_App_Platform !== undefined ? { "X-App-Platform": String(header.X_App_Platform) } : {}),
+      ...(header.X_Device_Id_Hash !== undefined ? { "X-Device-Id-Hash": String(header.X_Device_Id_Hash) } : {}),
+      ...(header.X_App_Version !== undefined ? { "X-App-Version": String(header.X_App_Version) } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!_res.ok) throw new OmiApiError(_res.status, _res);
+  return _res.status === 204 ? (undefined as any) : await _res.json();
+}
+
 export async function listApiKeys(init?: OmiApiClientInit): Promise<Array<DevApiKey>> {
   const _base = init?.baseURL ?? "";
   const _path = `/v1/dev/keys`;
@@ -16462,4 +16504,4 @@ export async function get_speech_profile_v4_speech_profile_get(header: { authori
   return _res.status === 204 ? (undefined as any) : await _res.json();
 }
 
-// Total: 399 client methods generated.
+// Total: 400 client methods generated.

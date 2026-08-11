@@ -506,6 +506,7 @@ class TestRouterPolicyMapping(unittest.TestCase):
             "knowledge_graph:extract",
             "knowledge_graph:canonical",
             "memories:extract",
+            "desktop:agent_pill_title",
             "wrapped:generate",
             "integration:conversations",
             "integration:memories",

@@ -1,6 +1,6 @@
 {
   "files": {
-    "desktop/macos/Desktop/Sources/FloatingControlBar/AgentPill.swift": 2375,
+    "desktop/macos/Desktop/Sources/FloatingControlBar/AgentPill.swift": 2311,
     "desktop/macos/Desktop/Sources/FloatingControlBar/FloatingControlBarView.swift": 2704,
     "desktop/macos/Desktop/Sources/FloatingControlBar/FloatingControlBarWindow.swift": 4920,
     "desktop/macos/Desktop/Sources/FloatingControlBar/PushToTalkManager.swift": 2807,
