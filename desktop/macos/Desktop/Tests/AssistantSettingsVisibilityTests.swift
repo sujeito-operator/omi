@@ -20,6 +20,7 @@ final class AssistantSettingsVisibilityTests: XCTestCase {
       .deletingLastPathComponent()
       .deletingLastPathComponent()
       .appendingPathComponent("Sources/MainWindow/Pages/Settings/Sections/\(name)")
+    // omi-test-quality: source-inspection -- static contract: SwiftUI pane composition has no headless seam; this pins the frame-processing gate on the panes that render the assistant controls.
     return try String(contentsOf: sourceURL, encoding: .utf8)
   }
 
