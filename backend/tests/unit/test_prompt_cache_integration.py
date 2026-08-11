@@ -166,12 +166,17 @@ def _passthrough_tool(target=None, **_kwargs):
     return lambda fn: fn
 
 
+_langchain_tools_was_stubbed = "langchain_core.tools" not in sys.modules
 langchain_tools_mod = _stub_module("langchain_core.tools")
 # Installed on the stub itself rather than through an autouse fixture. The fixture only ran
 # for tests in this file, so any other module that imports _get_agentic_module from here
 # (test_chat_agent_provider_retry.py) reached web_tools' import-time `from langchain_core.tools
 # import tool` against a bare stub and failed collection with ImportError.
-langchain_tools_mod.tool = _passthrough_tool
+# Only patched when this file created the stub: when the real langchain_core.tools is already
+# imported, its own @tool works and overwriting it here would leak a passthrough decorator into
+# every production tool module imported afterwards in the same process.
+if _langchain_tools_was_stubbed:
+    langchain_tools_mod.tool = _passthrough_tool
 
 
 # --- LLMs/memory stubs ---

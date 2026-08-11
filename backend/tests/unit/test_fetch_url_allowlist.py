@@ -508,3 +508,25 @@ class TestEgressAddressBounds:
 
         assert client.urls == [start]
         assert 'private or reserved address' in result
+
+
+class TestModuleStubIsolation:
+    def test_prompt_cache_stub_leaves_the_real_tool_decorator_installed(self):
+        """The prompt-cache harness stubs langchain_core.tools at import time. When the real
+        module is already loaded (as it is here, via web_tools), that stub must not replace the
+        real @tool decorator, or every tool module imported afterwards exposes raw functions."""
+        import importlib
+
+        import langchain_core.tools as real_tools
+
+        real_decorator = real_tools.tool
+        importlib.import_module('tests.unit.test_prompt_cache_integration')
+
+        assert real_tools.tool is real_decorator
+
+        @real_tools.tool
+        def _probe_tool(value: str) -> str:
+            """Probe."""
+            return value
+
+        assert hasattr(_probe_tool, 'ainvoke')
