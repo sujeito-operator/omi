@@ -1,6 +1,6 @@
 {
   "files": {
-    "backend/utils/apps.py": 1688,
+    "backend/utils/apps.py": 1693,
     "backend/utils/conversations/process_conversation.py": 1970,
     "backend/utils/memory/canonical_consolidation.py": 1935,
     "backend/utils/memory/canonical_memory_adapter.py": 2037,
@@ -13,7 +13,7 @@
     "backend/utils/sync/pipeline.py": 2499
   },
   "raise_justifications": {
-    "backend/utils/apps.py": "get_available_app_model_by_id: the set-preferred-app availability authority as a validated App model, so the summary path honors what the setter admitted instead of re-deciding with the installed slice (#10074). +36 pins manifest fetch and re-enable health probes through safe_request_target and rejects non-public chat-tool endpoints at validation time so developer-controlled URLs cannot SSRF private addresses (security audit).",
+    "backend/utils/apps.py": "get_available_app_model_by_id: the set-preferred-app availability authority as a validated App model, so the summary path honors what the setter admitted instead of re-deciding with the installed slice (#10074). +36 pins manifest fetch and re-enable health probes through safe_request_target and rejects non-public chat-tool endpoints at validation time so developer-controlled URLs cannot SSRF private addresses (security audit). +5 lets path-relative chat-tool endpoints (the documented /tools/... manifest format, resolved against app_home_url by routers.apps) past the new URL check instead of silently dropping every tool such an app declares.",
     "backend/utils/conversations/process_conversation.py": "Conversation finalization owns the transcript-to-memory transaction across canonical and legacy paths, so it supplies the shared dev-only allowlisted capture observer with the accepted-write result; cassette bounds, redaction, and export remain in testing.parity_pack_v0.live_capture.",
     "backend/utils/memory/canonical_consolidation.py": "Candidate selection, bounded retry leases, atomic promotion planning, and batch-level duplicate-supersede rejection remain one canonical long-term admission authority; extracting them would permit competing admission state machines (FC-split-mutation-authority).",
     "backend/utils/memory/canonical_memory_adapter.py": "Canonical conversation replacement and default-memory deletion share source-generation fencing, bounded lineage discovery, and atomic tombstone cleanup; splitting this state machine would duplicate lifecycle authority (FC-split-mutation-authority).",
