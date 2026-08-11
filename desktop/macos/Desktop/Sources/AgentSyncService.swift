@@ -147,9 +147,11 @@ actor AgentSyncService {
   private let tables = AgentSyncService.tableSpecs
   private static let requiredRemoteTables = Set(tableSpecs.map(\.name))
 
-  #if DEBUG
-    static var tableNamesForTesting: Set<String> { requiredRemoteTables }
-  #endif
+  /// The exact set of tables this service is allowed to push to the agent VM.
+  /// Read-only, and deliberately not `#if DEBUG`: the guard test that proves
+  /// `screenshots`/`focus_sessions`/`observations` are absent has to compile in
+  /// the release test lane too, which is where the DEBUG-only accessor broke.
+  static var syncedTableNames: Set<String> { requiredRemoteTables }
 
   // Tables with only a createdAt (no updatedAt) that are append-only but not tracked
   // by id — handled via appendOnly=true above.

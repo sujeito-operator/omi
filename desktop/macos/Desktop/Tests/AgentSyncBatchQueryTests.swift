@@ -288,9 +288,9 @@ private actor AgentSyncDelayedTokenGate {
 final class AgentSyncBatchQueryTests: XCTestCase {
 
   func testScreenTableIsNotRegisteredForCloudSync() {
-    XCTAssertFalse(AgentSyncService.tableNamesForTesting.contains("screenshots"))
-    XCTAssertFalse(AgentSyncService.tableNamesForTesting.contains("focus_sessions"))
-    XCTAssertFalse(AgentSyncService.tableNamesForTesting.contains("observations"))
+    XCTAssertFalse(AgentSyncService.syncedTableNames.contains("screenshots"))
+    XCTAssertFalse(AgentSyncService.syncedTableNames.contains("focus_sessions"))
+    XCTAssertFalse(AgentSyncService.syncedTableNames.contains("observations"))
   }
 
   func testPartialSchemaIsNotReadyEvenWhenDatabaseReadyIsTrue() {
