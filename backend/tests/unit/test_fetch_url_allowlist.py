@@ -179,6 +179,60 @@ class TestRuntimeEnforcement:
         assert 'Content from' in result
         assert 'Hello' in result
 
+    @pytest.mark.asyncio
+    async def test_malformed_url_returns_a_bounded_error_instead_of_raising(self):
+        malformed = 'https://['
+        config = RunnableConfig(configurable={'user_provided_urls': [malformed]})
+
+        with patch('utils.retrieval.tools.web_tools._fetch_page', new_callable=AsyncMock) as mock_fetch:
+            result = await fetch_url_tool.ainvoke({'url': malformed}, config=config)
+
+        assert result.startswith('Error:')
+        mock_fetch.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_malformed_allowlist_entry_does_not_abort_a_valid_fetch(self):
+        allowed = 'https://example.com/page'
+        config = RunnableConfig(configurable={'user_provided_urls': ['https://[', allowed]})
+
+        with patch(
+            'utils.retrieval.tools.web_tools._fetch_page',
+            new_callable=AsyncMock,
+            return_value=(200, 'text/html', '<html><body><p>Hello</p></body></html>'),
+        ) as mock_fetch:
+            result = await fetch_url_tool.ainvoke({'url': allowed}, config=config)
+
+        assert mock_fetch.await_args.args[0] == allowed
+        assert 'Hello' in result
+
+    @pytest.mark.asyncio
+    async def test_outbound_url_keeps_the_allowlisted_empty_query_delimiter(self):
+        allowed = 'https://example.com/path?'
+        config = RunnableConfig(configurable={'user_provided_urls': [allowed]})
+
+        with patch(
+            'utils.retrieval.tools.web_tools._fetch_page',
+            new_callable=AsyncMock,
+            return_value=(200, 'text/html', '<html><body><p>Hello</p></body></html>'),
+        ) as mock_fetch:
+            await fetch_url_tool.ainvoke({'url': allowed}, config=config)
+
+        assert mock_fetch.await_args.args[0] == allowed
+
+    @pytest.mark.asyncio
+    async def test_outbound_url_lowercases_only_the_scheme(self):
+        allowed = 'HTTPS://example.com/Path?A=B#Frag'
+        config = RunnableConfig(configurable={'user_provided_urls': [allowed]})
+
+        with patch(
+            'utils.retrieval.tools.web_tools._fetch_page',
+            new_callable=AsyncMock,
+            return_value=(200, 'text/html', '<html><body><p>Hello</p></body></html>'),
+        ) as mock_fetch:
+            await fetch_url_tool.ainvoke({'url': allowed}, config=config)
+
+        assert mock_fetch.await_args.args[0] == 'https://example.com/Path?A=B#Frag'
+
     def test_is_url_allowlisted_rejects_outbound_trailing_punctuation(self):
         allowlist = ['https://example.com/page']
         assert not is_url_allowlisted('https://example.com/page.', allowlist)

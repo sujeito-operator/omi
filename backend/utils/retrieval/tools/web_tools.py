@@ -10,7 +10,7 @@ import re
 import logging
 from html.parser import HTMLParser
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, cast
-from urllib.parse import urljoin, urlparse, urlunparse
+from urllib.parse import urljoin, urlparse
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool  # type: ignore[reportUnknownVariableType]  # langchain @tool decorator partially typed
@@ -65,7 +65,10 @@ def _canonical_user_url(
     normalized = normalize_user_url(url) if strip_trailing_punctuation else (url or '').strip()
     if not normalized:
         return None
-    parsed = urlparse(normalized)
+    try:
+        parsed = urlparse(normalized)
+    except ValueError:
+        return None
     if parsed.scheme.lower() not in {'http', 'https'} or not parsed.hostname or parsed.username or parsed.password:
         return None
     try:
@@ -490,7 +493,10 @@ async def fetch_url_tool(url: str, config: RunnableConfig = None) -> str:  # typ
     logger.info(f"fetch_url_tool called - url: {sanitize(url)}")
 
     candidate_url = (url or '').strip()
-    parsed_url = urlparse(candidate_url)
+    try:
+        parsed_url = urlparse(candidate_url)
+    except ValueError:
+        return 'Error: URL could not be parsed.'
     if parsed_url.scheme.lower() not in {'http', 'https'}:
         return 'Error: URL must start with http:// or https://'
 
@@ -499,16 +505,10 @@ async def fetch_url_tool(url: str, config: RunnableConfig = None) -> str:  # typ
         logger.warning(f"fetch_url_tool blocked - URL not in user allowlist: {sanitize(url)}")
         return URL_NOT_ALLOWLISTED_MESSAGE
 
-    normalized_url = urlunparse(
-        (
-            parsed_url.scheme.lower(),
-            parsed_url.netloc,
-            parsed_url.path,
-            parsed_url.params,
-            parsed_url.query,
-            parsed_url.fragment,
-        )
-    )
+    # Only the scheme is normalized, and in place: round-tripping through urlunparse drops
+    # delimiters that the allowlist identity preserved (an empty query keeps its '?'), which
+    # would send the request to a different target than the one that was validated.
+    normalized_url = parsed_url.scheme.lower() + candidate_url[len(parsed_url.scheme) :]
 
     headers: Dict[str, str] = {
         'User-Agent': 'Mozilla/5.0 (compatible; Omi-AI-Bot/1.0)',
