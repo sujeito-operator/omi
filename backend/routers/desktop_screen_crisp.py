@@ -65,6 +65,33 @@ async def _find_session(email: str, website_id: str, headers: dict[str, str]) ->
     return None
 
 
+@router.post("/v1/screen-activity/sync")
+async def retire_screen_activity_sync(uid: str = Depends(get_current_user_uid)) -> dict[str, Any]:
+    """Tombstone for the retired screen-activity sync route. Stores nothing, ever.
+
+    LIFECYCLE: one-time
+    DELETE-AFTER: https://github.com/BasedHardware/omi/issues/11018
+
+    The shipped desktop client treats only HTTP 200 as success and never
+    advances its cursor otherwise. It has no terminal-status handling, no
+    max-attempt limit, and no server-driven kill switch, so a 404/410 makes it
+    re-POST the *same* OCR batch every five minutes forever: more transmitted
+    screen text and more battery burn than before the change, on installs that
+    cannot be updated. Returning 200 lets those clients advance past their
+    backlog and go quiet.
+
+    The request body is never read, parsed, logged, or written: no Firestore
+    document, no Pinecone vector, no log line derived from the payload. This
+    endpoint is a drain, not a sink.
+
+    This does not fully close the egress — an un-updated client still transmits
+    OCR text that this endpoint discards. Only a client that stops uploading
+    does that, which is why this is temporary and paired with a client change.
+    """
+    logger.info("Discarding retired screen-activity sync payload uid=%s", uid)
+    return {"status": "ok", "written": 0, "retired": True}
+
+
 @router.get("/v1/crisp/unread")
 async def get_crisp_unread(
     since: int = Query(default=0, ge=0), uid: str = Depends(get_current_user_uid)
