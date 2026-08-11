@@ -118,6 +118,12 @@ class TestPromptScoping:
         assert '<user_provided_urls>' in AGENT_SAFETY_INSTRUCTIONS
         assert 'tool results' in AGENT_SAFETY_INSTRUCTIONS
 
+    def test_agent_safety_instructions_carry_no_exception_the_runtime_cannot_honor(self):
+        """is_url_allowlisted admits only URLs typed in the current turn, so the prompt must not
+        promise that a user request can unlock a URL that came from retrieved data."""
+        assert 'unless the user explicitly asks' not in AGENT_SAFETY_INSTRUCTIONS
+        assert not is_url_allowlisted('https://retrieved.example.com/link', [])
+
     def test_inject_user_url_allowlist_prepends_to_latest_user_turn(self):
         messages = [{'role': 'user', 'content': 'hello https://example.com'}]
         updated = _inject_user_url_allowlist(messages, ['https://example.com'])
