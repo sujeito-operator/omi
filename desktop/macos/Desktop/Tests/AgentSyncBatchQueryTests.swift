@@ -311,8 +311,10 @@ final class AgentSyncBatchQueryTests: XCTestCase {
         fetchIDToken: { "test-firebase-token" },
         dataForRequest: { request in
           let body = try JSONSerialization.data(withJSONObject: ["databaseReady": false])
-          let response = HTTPURLResponse(
-            url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+          guard let url = request.url,
+            let response = HTTPURLResponse(
+              url: url, statusCode: 200, httpVersion: nil, headerFields: nil)
+          else { throw URLError(.badURL) }
           return (body, response)
         },
         reuploadDatabase: { _, _ in false },
