@@ -1,10 +1,8 @@
-import os
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Union, cast
 
 from google.cloud import firestore
 
-from database import vector_db
 from ._client import db
 import logging
 
@@ -12,8 +10,6 @@ logger = logging.getLogger(__name__)
 
 SCREEN_ACTIVITY_COLLECTION = 'screen_activity'
 USERS_COLLECTION = 'users'
-MAINTENANCE_COLLECTION = 'maintenance'
-SCREEN_ACTIVITY_PURGE_MARKER = 'screen_activity_purge_v1'
 
 # Date inputs may arrive as datetime or as pre-formatted 'YYYY-MM-DD HH:MM:SS.mmm' strings.
 DateInput = Union[datetime, str]
@@ -25,38 +21,6 @@ def get_screen_activity_ids(uid: str) -> List[str]:
     Used for bulk operations like account deletion (e.g. to purge derived Pinecone vectors)."""
     coll = db.collection(USERS_COLLECTION).document(uid).collection(SCREEN_ACTIVITY_COLLECTION)
     return [str(doc.id) for doc in coll.select([]).stream()]
-
-
-def purge_screen_activity_for_user(uid: str) -> int:
-    collection_ref = db.collection(USERS_COLLECTION).document(uid).collection(SCREEN_ACTIVITY_COLLECTION)
-    ids = get_screen_activity_ids(uid)
-    if not ids:
-        return 0
-    if vector_db.index is None:
-        raise RuntimeError('Pinecone index not initialized for screen activity purge')
-
-    vector_db.delete_screen_activity_vectors(uid, ids)
-    for i in range(0, len(ids), 500):
-        batch = db.batch()
-        for doc_id in ids[i : i + 500]:
-            batch.delete(collection_ref.document(doc_id))
-        batch.commit()
-    return len(ids)
-
-
-def purge_all_screen_activity() -> int:
-    if os.getenv('OMI_ENV_STAGE', '').strip().lower() != 'prod':
-        logger.info('Skipping historical screen activity purge outside production')
-        return 0
-    marker = db.collection(MAINTENANCE_COLLECTION).document(SCREEN_ACTIVITY_PURGE_MARKER)
-    marker_snapshot = marker.get()
-    if marker_snapshot.exists and (marker_snapshot.to_dict() or {}).get('status') == 'completed':
-        return 0
-    total = 0
-    for user in db.collection(USERS_COLLECTION).select([]).stream():
-        total += purge_screen_activity_for_user(str(user.id))
-    marker.set({'status': 'completed', 'completedAt': firestore.SERVER_TIMESTAMP}, merge=True)
-    return total
 
 
 def upsert_screen_activity(uid: str, rows: List[Dict[str, Any]]) -> int:

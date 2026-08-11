@@ -44,7 +44,8 @@ def test_vm_publish_records_the_screen_privacy_version():
     Desktop-driven restart migration is gone (the reconciler owns lifecycle), so this
     marker is what lets a later policy identify VMs published before the screen-egress
     removal. The desktop is fail-closed independently: it refuses to start a session,
-    sync, or hand over a backend token until ``/purge-screen-activity`` returns 200.
+    sync, or hand over a backend token unless ``/screen-activity-status`` reports that
+    the VM holds no screen data. Existing data is reported, never deleted.
     """
     writes = []
 

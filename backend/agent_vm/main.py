@@ -462,76 +462,28 @@ def install_uploaded_database(temporary: Path) -> None:
             raise
 
 
-def purge_screen_data_database() -> int:
+def screen_data_report() -> dict[str, Any]:
+    """Report whether this VM still holds screen/OCR data, without deleting anything.
+
+    Historical data is deliberately left in place: this build closes the ingress
+    and refuses to run a session while legacy screen rows are present, rather
+    than destroying records that no other copy may hold. The desktop treats a
+    non-empty report as fail-closed.
+    """
     with runtime.lock:
         if runtime.db is None:
-            return 0
-        tables = screen_data_tables()
-        deleted = 0
-        for table in tables:
+            return {"present": False, "tables": []}
+        present: list[str] = []
+        for table in screen_data_tables():
             try:
                 count = runtime.db.execute(f"SELECT COUNT(*) FROM {quoted(table)}").fetchone()
             except sqlite3.OperationalError as exc:
                 if "no such table" in str(exc).lower():
                     continue
                 raise
-            deleted += int(count[0]) if count else 0
-        if not tables:
-            runtime.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            return deleted
-
-        temporary = runtime.db_path.with_suffix(runtime.db_path.suffix + ".purging")
-        previous = runtime.db_path.with_suffix(runtime.db_path.suffix + ".purging-previous")
-        temporary.unlink(missing_ok=True)
-        previous.unlink(missing_ok=True)
-        fts_tables = [table for table in tables if table.lower().endswith("_fts")]
-        fts_shadow_tables = {
-            table for base in fts_tables for table in tables if table.lower().startswith(f"{base.lower()}_")
-        }
-        drop_order = fts_tables + sorted(
-            [table for table in tables if table not in fts_tables and table not in fts_shadow_tables],
-            key=lambda table: table.lower() == "screenshots",
-        )
-        for table in drop_order:
-            try:
-                runtime.db.execute(f"DROP TABLE {quoted(table)}")
-            except sqlite3.OperationalError as exc:
-                if "no such table" not in str(exc).lower():
-                    raise
-        runtime.db.commit()
-        runtime.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        try:
-            runtime.db.execute("VACUUM INTO ?", (str(temporary),))
-            fsync_file(temporary)
-        except Exception:
-            temporary.unlink(missing_ok=True)
-            raise
-        runtime.close_database()
-        remove_database_sidecars(runtime.db_path)
-        moved = False
-        try:
-            if runtime.db_path.is_file():
-                runtime.db_path.replace(previous)
-                moved = True
-                fsync_directory(runtime.db_path.parent)
-            temporary.replace(runtime.db_path)
-            fsync_directory(runtime.db_path.parent)
-            if not runtime.open_database():
-                raise RuntimeError("Failed to reopen purged database")
-            fsync_database_files(runtime.db_path)
-            fsync_directory(runtime.db_path.parent)
-            previous.unlink(missing_ok=True)
-        except Exception:
-            runtime.close_database()
-            temporary.unlink(missing_ok=True)
-            if moved and previous.is_file():
-                runtime.db_path.unlink(missing_ok=True)
-                previous.replace(runtime.db_path)
-                fsync_directory(runtime.db_path.parent)
-            if not runtime.open_database():
-                raise RuntimeError("Failed to restore database after purge")
-            raise
-        return deleted
+            if count and int(count[0]) > 0:
+                present.append(table)
+        return {"present": bool(present), "tables": sorted(present)}
 
 
 async def upload_database(request: Request) -> tuple[int, int]:
@@ -629,7 +581,7 @@ async def execute_backend_tool(name: str, params: dict[str, Any]) -> str:
 
 def execute_sql(query: str) -> str:
     if runtime.db is None:
-        return json.dumps({"error": "Database not loaded. Upload omi.db first."})
+        return json.dumps({"error": "Database not loaded yet. It is created on the desktop's first sync."})
     upper = query.upper()
     if any(
         re.search(rf"\b{word}\b", upper) for word in ("DROP", "ALTER", "CREATE", "PRAGMA", "ATTACH", "DETACH", "VACUUM")
@@ -724,7 +676,11 @@ class AgentSession:
         async def sql_tool(arguments: dict[str, Any]) -> dict[str, Any]:
             return {"content": [{"type": "text", "text": execute_sql(str(arguments["query"]))}]}
 
-        tools = [sql_tool] if runtime.db is not None else []
+        # Registered unconditionally: retiring the database upload means a fresh
+        # VM has no database until the desktop's first /sync bootstraps one, and
+        # a session started before that would otherwise lose execute_sql for its
+        # whole lifetime. execute_sql already reports the not-loaded state.
+        tools = [sql_tool]
         for definition in runtime.backend_tools:
             name = definition.get("name")
             if not isinstance(name, str) or not IDENTIFIER.fullmatch(name):
@@ -940,15 +896,15 @@ async def sync(request: Request) -> dict[str, Any]:
     return {"applied": applied, "table": table}
 
 
-@app.post("/purge-screen-activity")
-async def purge_screen_activity(request: Request) -> dict[str, Any]:
+@app.post("/screen-activity-status")
+async def screen_activity_status(request: Request) -> dict[str, Any]:
     runtime.require_auth(request)
     try:
-        deleted = await run_thread_operation(purge_screen_data_database)
+        report = await run_thread_operation(screen_data_report)
     except (OSError, RuntimeError, sqlite3.Error) as exc:
-        raise HTTPException(status_code=400, detail="Unable to purge screen activity") from exc
+        raise HTTPException(status_code=400, detail="Unable to inspect screen activity") from exc
     runtime.last_activity_at = time.monotonic()
-    return {"status": "ok", "deleted": deleted}
+    return {"status": "ok", **report}
 
 
 @app.websocket("/ws")

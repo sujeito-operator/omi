@@ -11,8 +11,9 @@ private actor SessionStepRecorder {
 }
 
 /// Closing screen egress must not disconnect the sanitized non-screen context
-/// path, and must not let anything reach the VM before its screen activity is
-/// purged. These drive the real session preparation with injected hooks.
+/// path, and nothing may reach a VM that still holds screen activity. The gate
+/// refuses the session; it never deletes the data to clear itself. These drive
+/// the real session preparation with injected hooks.
 @MainActor
 final class AgentVMSessionStartupTests: XCTestCase {
   private var ownerFixture: RuntimeOwnerAuthorityTestFixture?
@@ -30,13 +31,13 @@ final class AgentVMSessionStartupTests: XCTestCase {
 
   private func makeService(
     recorder: SessionStepRecorder,
-    purgeSucceeds: Bool
+    screenActivityAbsent: Bool
   ) -> AgentVMService {
     AgentVMService(
       sessionHooks: AgentVMService.SessionHooks(
-        purgeScreenActivity: { _, _ in
-          await recorder.record("purge")
-          return purgeSucceeds
+        screenActivityAbsent: { _, _ in
+          await recorder.record("screen-check")
+          return screenActivityAbsent
         },
         startNonScreenSync: { _, _ in await recorder.record("sync") },
         sendFirebaseToken: { _, _, _, _ in await recorder.record("token") }))
@@ -53,31 +54,31 @@ final class AgentVMSessionStartupTests: XCTestCase {
       lastQueryAt: nil)
   }
 
-  func testReadyVMPurgesScreenActivityThenStartsNonScreenSync() async {
+  func testReadyVMConfirmsNoScreenActivityThenStartsNonScreenSync() async {
     let recorder = SessionStepRecorder()
-    let service = makeService(recorder: recorder, purgeSucceeds: true)
+    let service = makeService(recorder: recorder, screenActivityAbsent: true)
 
     await service.prepareReadyVM(readyStatus(), ip: "10.0.0.1", ownerID: ownerID, generation: 0)
 
     let steps = await recorder.steps
-    XCTAssertEqual(steps, ["purge", "sync", "token"])
+    XCTAssertEqual(steps, ["screen-check", "sync", "token"])
   }
 
-  func testFailedScreenPurgeBlocksSyncAndBackendToken() async {
+  func testRemainingScreenActivityBlocksSyncAndBackendToken() async {
     let recorder = SessionStepRecorder()
-    let service = makeService(recorder: recorder, purgeSucceeds: false)
+    let service = makeService(recorder: recorder, screenActivityAbsent: false)
 
     await service.prepareReadyVM(readyStatus(), ip: "10.0.0.1", ownerID: ownerID, generation: 0)
 
     let steps = await recorder.steps
-    XCTAssertEqual(steps, ["purge"])
+    XCTAssertEqual(steps, ["screen-check"])
   }
 
   /// Full-database upload is retired because the local database can hold
   /// screen/OCR rows; the sync-failure recovery hook must not reopen it.
   func testDatabaseReuploadStaysDisabled() async {
     let recorder = SessionStepRecorder()
-    let service = makeService(recorder: recorder, purgeSucceeds: true)
+    let service = makeService(recorder: recorder, screenActivityAbsent: true)
 
     let reuploaded = await service.reuploadDatabase(vmIP: "10.0.0.1", authToken: "vm-token")
 

@@ -42,18 +42,18 @@ final class GzipProcessController: @unchecked Sendable {
 actor AgentVMService {
   static let shared = AgentVMService()
 
-  /// The agent-session steps, injectable so the ordering contract — purge the
-  /// VM's screen activity before any non-screen sync or backend token reaches
-  /// it — is testable without a live VM.
+  /// The agent-session steps, injectable so the ordering contract — confirm the
+  /// VM holds no screen activity before any non-screen sync or backend token
+  /// reaches it — is testable without a live VM.
   struct SessionHooks: Sendable {
-    let purgeScreenActivity: @Sendable (_ vmIP: String, _ authToken: String) async -> Bool
+    let screenActivityAbsent: @Sendable (_ vmIP: String, _ authToken: String) async -> Bool
     let startNonScreenSync: @Sendable (_ vmIP: String, _ authToken: String) async -> Void
     let sendFirebaseToken:
       @Sendable (_ vmIP: String, _ authToken: String, _ ownerID: String, _ generation: UInt64) async -> Void
 
     static let live = SessionHooks(
-      purgeScreenActivity: { vmIP, authToken in
-        await AgentVMService.purgeRemoteScreenActivity(vmIP: vmIP, authToken: authToken)
+      screenActivityAbsent: { vmIP, authToken in
+        await AgentVMService.remoteScreenActivityAbsent(vmIP: vmIP, authToken: authToken)
       },
       startNonScreenSync: { vmIP, authToken in
         await AgentSyncService.shared.start(vmIP: vmIP, authToken: authToken)
@@ -222,10 +222,13 @@ actor AgentVMService {
   ) async {
     guard isCurrent(ownerID: ownerID, generation: generation) else { return }
     // The local database can hold screen/OCR rows, so it is never uploaded.
-    // Purge whatever screen activity the VM still holds first; the VM
-    // bootstraps the sanitized non-screen schema on its first `/sync`.
-    guard await sessionHooks.purgeScreenActivity(ip, status.authToken) else {
-      log("AgentVMService: Refusing to start agent session until VM screen activity is purged")
+    // A VM that still holds screen activity from before this change gets no
+    // session at all: no sync, no backend token. Nothing is deleted to clear
+    // that state — removing existing records is deliberately out of scope, so
+    // this gate refuses rather than repairs. The VM bootstraps the sanitized
+    // non-screen schema on its first `/sync`.
+    guard await sessionHooks.screenActivityAbsent(ip, status.authToken) else {
+      log("AgentVMService: Refusing to start agent session while the VM still holds screen activity")
       return
     }
     guard isCurrent(ownerID: ownerID, generation: generation) else { return }
@@ -539,21 +542,30 @@ actor AgentVMService {
     await sessionHooks.sendFirebaseToken(vmIP, authToken, ownerID, generation)
   }
 
-  /// Delete every screen-activity row a VM still holds. The agent session is
-  /// fail-closed on this: no sync and no backend token until it returns 200.
-  private static func purgeRemoteScreenActivity(vmIP: String, authToken: String) async -> Bool {
-    guard let url = URL(string: "http://\(vmIP):8080/purge-screen-activity") else { return false }
+  /// Report whether the VM is free of screen activity, without deleting
+  /// anything. Fail-closed in every ambiguous case: an unreachable VM, a
+  /// non-200, an unparseable body, or an older image without this endpoint all
+  /// return false, so no session starts.
+  private static func remoteScreenActivityAbsent(vmIP: String, authToken: String) async -> Bool {
+    guard let url = URL(string: "http://\(vmIP):8080/screen-activity-status") else { return false }
     var request = URLRequest(url: url)
     request.httpMethod = "POST"
     request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
-    request.timeoutInterval = 600
+    request.timeoutInterval = 30
 
     do {
-      let (_, response) = try await URLSession.shared.data(for: request)
-      guard let httpResponse = response as? HTTPURLResponse else { return false }
-      return httpResponse.statusCode == 200
+      let (data, response) = try await URLSession.shared.data(for: request)
+      guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return false }
+      guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let present = json["present"] as? Bool
+      else { return false }
+      if present {
+        let tables = (json["tables"] as? [String])?.joined(separator: ", ") ?? "unknown"
+        log("AgentVMService: VM still holds screen activity (\(tables)); leaving it in place and skipping the session")
+      }
+      return !present
     } catch {
-      log("AgentVMService: Failed to purge VM screen activity — \(error.localizedDescription)")
+      log("AgentVMService: Failed to read VM screen activity status — \(error.localizedDescription)")
       return false
     }
   }

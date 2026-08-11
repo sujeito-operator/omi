@@ -87,7 +87,7 @@ def test_http_protocol_requires_vm_token(tmp_path: Path) -> None:
         assert client.post("/auth", json={"firebaseToken": "firebase"}).status_code == 401
         assert client.post("/ping").status_code == 401
         assert client.post("/sync", json={"table": "screenshots", "rows": [{"id": "1"}]}).status_code == 401
-        assert client.post("/purge-screen-activity").status_code == 401
+        assert client.post("/screen-activity-status").status_code == 401
         assert client.post("/auth?token=test-token", json={}).status_code == 400
         assert client.post("/ping?token=test-token").json() == {"status": "ok"}
 
@@ -808,69 +808,56 @@ def test_sync_groups_rows_by_present_columns(tmp_path: Path) -> None:
     ]
 
 
-def test_purge_screen_activity_removes_legacy_screen_tables(tmp_path: Path) -> None:
+def test_screen_activity_status_reports_without_deleting(tmp_path: Path) -> None:
+    """Legacy screen data is reported, never destroyed.
+
+    Purging existing records is deliberately out of scope: the VM reports what
+    it holds so the desktop can fail closed, and every row stays on disk.
+    """
     app, module = load_app(tmp_path)
     connection = sqlite3.connect(module.runtime.db_path)
     connection.execute("CREATE TABLE screenshots (id TEXT PRIMARY KEY)")
     connection.execute("CREATE TABLE focus_sessions (id TEXT PRIMARY KEY)")
-    connection.execute("CREATE TABLE observations (id TEXT PRIMARY KEY)")
     connection.execute("CREATE TABLE ocr_texts (id TEXT PRIMARY KEY, text TEXT)")
-    connection.execute("CREATE TABLE ocr_occurrences (id TEXT PRIMARY KEY, text_id TEXT)")
-    connection.execute("CREATE TABLE proactive_extractions (id TEXT PRIMARY KEY, content TEXT)")
-    connection.execute("CREATE VIRTUAL TABLE ocr_texts_fts USING fts5(text)")
     connection.executemany("INSERT INTO screenshots VALUES (?)", [("s1",), ("s2",)])
-    connection.execute("INSERT INTO focus_sessions VALUES ('f1')")
-    connection.execute("INSERT INTO observations VALUES ('o1')")
     connection.execute("INSERT INTO ocr_texts VALUES ('t1', 'secret')")
-    connection.execute("INSERT INTO ocr_occurrences VALUES ('o1', 't1')")
-    connection.execute("INSERT INTO proactive_extractions VALUES ('p1', 'secret')")
-    connection.execute("INSERT INTO ocr_texts_fts VALUES ('secret')")
     connection.commit()
     connection.close()
     assert module.runtime.open_database()
 
     with TestClient(app) as client:
-        response = client.post(
+        rejected = client.post(
             "/sync?token=test-token",
             json={"table": "screenshots", "rows": [{"id": "s3"}]},
         )
-        purge = client.post("/purge-screen-activity?token=test-token")
-        remaining = {
-            str(row[0])
-            for row in module.runtime.db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-        }
+        status = client.post("/screen-activity-status?token=test-token")
 
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Table 'screenshots' not in sync whitelist"
-    assert purge.status_code == 200
-    assert purge.json()["status"] == "ok"
-    assert purge.json()["deleted"] >= 8
-    assert not any(module.is_screen_data_table(table) for table in remaining)
-    assert b"secret" not in module.runtime.db_path.read_bytes()
-    assert not module.runtime.db_path.with_name(module.runtime.db_path.name + "-wal").exists()
+    assert rejected.status_code == 400
+    assert rejected.json()["detail"] == "Table 'screenshots' not in sync whitelist"
+    assert status.status_code == 200
+    assert status.json()["present"] is True
+    assert "screenshots" in status.json()["tables"]
+    assert "ocr_texts" in status.json()["tables"]
+    # Nothing was deleted: the rows and their tables are still there.
+    assert module.runtime.open_database()
+    assert module.runtime.db.execute("SELECT COUNT(*) FROM screenshots").fetchone()[0] == 2
+    assert module.runtime.db.execute("SELECT COUNT(*) FROM ocr_texts").fetchone()[0] == 1
 
 
-def test_purge_screen_activity_removes_partial_vacuum_on_fsync_failure(tmp_path: Path, monkeypatch) -> None:
+def test_screen_activity_status_reports_absent_on_a_clean_vm(tmp_path: Path) -> None:
     app, module = load_app(tmp_path)
     connection = sqlite3.connect(module.runtime.db_path)
-    connection.execute("CREATE TABLE screenshots (id TEXT PRIMARY KEY)")
-    connection.execute("INSERT INTO screenshots VALUES ('s1')")
+    connection.execute("CREATE TABLE memories (id TEXT PRIMARY KEY, content TEXT)")
     connection.commit()
     connection.close()
     assert module.runtime.open_database()
 
-    def fail_fsync(_path: Path) -> None:
-        raise OSError("fsync failed")
-
-    monkeypatch.setattr(module, "fsync_file", fail_fsync)
-
     with TestClient(app) as client:
-        response = client.post("/purge-screen-activity?token=test-token")
+        status = client.post("/screen-activity-status?token=test-token")
 
-    temporary = module.runtime.db_path.with_suffix(module.runtime.db_path.suffix + ".purging")
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Unable to purge screen activity"
-    assert not temporary.exists()
+    assert status.status_code == 200
+    assert status.json()["present"] is False
+    assert status.json()["tables"] == []
 
 
 def test_agent_vm_hides_and_rejects_legacy_ocr_tables(tmp_path: Path) -> None:

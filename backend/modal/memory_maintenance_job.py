@@ -17,7 +17,6 @@ import os
 
 import firebase_admin
 
-from database.screen_activity import purge_all_screen_activity
 from utils.memory.canonical_short_term_maintenance_cron import (
     run_canonical_short_term_maintenance_cron,
 )
@@ -44,8 +43,6 @@ def _init_firebase() -> None:
 def main() -> None:
     _init_firebase()
     logger.info("Starting memory-maintenance-job...")
-    purged_screen_activity = purge_all_screen_activity()
-    logger.info("Purged %s historical screen activity records", purged_screen_activity)
     summary = asyncio.run(
         run_canonical_short_term_maintenance_cron(
             recurrence_signal_persister=persist_recurrence_signals_for_maintenance,

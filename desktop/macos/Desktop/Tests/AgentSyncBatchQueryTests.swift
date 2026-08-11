@@ -293,6 +293,40 @@ final class AgentSyncBatchQueryTests: XCTestCase {
     XCTAssertFalse(AgentSyncService.syncedTableNames.contains("observations"))
   }
 
+  /// Retiring the database upload made the cursors load-bearing: a replacement
+  /// VM starts empty, so resuming from the previous VM's cursors would send it
+  /// only future rows and never the user's existing action items, memories,
+  /// transcriptions, or notes.
+  func testStartResetsCursorsWhenTheVMReportsNoDatabase() async {
+    let ownerFixture = RuntimeOwnerAuthorityTestFixture()
+    await ownerFixture.establish(authOwnerID: "agent-sync-cursor-owner")
+    defer { Task { await ownerFixture.restore() } }
+    let cursorKey = "agentSync_cursors.agent-sync-cursor-owner"
+    let seeded = try? JSONEncoder().encode(["memories": ["lastId": 42, "lastUpdatedAt": "2026-01-01T00:00:00"]])
+    UserDefaults.standard.set(seeded, forKey: cursorKey)
+    defer { UserDefaults.standard.removeObject(forKey: cursorKey) }
+
+    let service = AgentSyncService(
+      networkHooks: AgentSyncService.NetworkHooks(
+        fetchIDToken: { "test-firebase-token" },
+        dataForRequest: { request in
+          let body = try JSONSerialization.data(withJSONObject: ["databaseReady": false])
+          let response = HTTPURLResponse(
+            url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+          return (body, response)
+        },
+        reuploadDatabase: { _, _ in false },
+        now: Date.init,
+        tableSyncEnabled: true))
+
+    await service.start(vmIP: "replacement-vm", authToken: "vm-token")
+    await service.stop(flushPendingChanges: false)
+
+    XCTAssertNil(
+      UserDefaults.standard.data(forKey: cursorKey),
+      "a VM reporting no database must clear the persisted cursors so every whitelisted table re-syncs")
+  }
+
   func testPartialSchemaIsNotReadyEvenWhenDatabaseReadyIsTrue() {
     let readiness = AgentSyncService.databaseReadiness(
       healthPayload: ["databaseReady": true],
