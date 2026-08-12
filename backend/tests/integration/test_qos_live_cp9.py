@@ -58,6 +58,7 @@ from utils.llm.clients import (
 
 SIMPLE_PROMPT = "Reply with exactly one word: hello"
 HAS_GEMINI_KEY = bool(os.environ.get('GEMINI_API_KEY', ''))
+HAS_OPENROUTER_KEY = bool(os.environ.get('OPENROUTER_API_KEY', ''))
 
 
 # ---------------------------------------------------------------------------
@@ -75,9 +76,9 @@ class TestP1_GetLlmRouting:
         assert response.content.strip(), f"{feature} returned empty response"
         print(f"  P1 {feature} ({get_model(feature)}): {response.content.strip()[:60]}")
 
-    @pytest.mark.skipif(not HAS_GEMINI_KEY, reason="GEMINI_API_KEY not set")
+    @pytest.mark.skipif(not (HAS_GEMINI_KEY or HAS_OPENROUTER_KEY), reason="no Gemini/OpenRouter key set")
     def test_gemini_features_respond(self):
-        """Gemini features in premium profile (flash-lite) respond to real prompts."""
+        """Gemini-backed features in premium profile respond to real prompts."""
         gemini_features = [f for f, (m, p) in MODEL_QOS_PROFILES['premium'].items() if p == 'gemini']
         for feature in gemini_features:
             llm = get_llm(feature)
@@ -101,11 +102,12 @@ class TestP2_ModelProviderResolution:
         print(f"  P2: All {len(MODEL_QOS_PROFILES)} profiles validated")
 
     def test_active_profile_get_model(self):
+        info = get_qos_info()
         for feature in _active_profile:
             model = get_model(feature)
             provider = get_provider(feature)
-            assert model == _active_profile[feature][0]
-            assert provider == _active_profile[feature][1]
+            assert model == info[feature]['model'], feature
+            assert provider == info[feature]['provider'], feature
 
     def test_three_profiles_exist(self):
         assert len(MODEL_QOS_PROFILES) == 3
@@ -408,8 +410,8 @@ class TestP13_QosInfo:
         info = get_qos_info()
         for feature in _active_profile:
             assert feature in info
-            assert info[feature]['model'] == _active_profile[feature][0]
-            assert info[feature]['provider'] == _active_profile[feature][1]
+            assert info[feature]['model'] == get_model(feature), feature
+            assert info[feature]['provider'] == get_provider(feature), feature
             assert info[feature]['profile'] == _active_profile_name
 
     def test_pinned_features_included(self):

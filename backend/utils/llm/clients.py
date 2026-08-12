@@ -603,11 +603,12 @@ def get_qos_info() -> Dict[str, Dict[str, str]]:
     return info
 
 
-# Startup logging — log active profile so cost issues are traceable.
+# Startup logging — log effective routes (including the key-gated OpenRouter
+# preference) so cost issues are traceable.
 _active_qos_profile = get_active_profile()
 logger.info('Model QoS profile=%s (%d features)', get_active_profile_name(), len(_active_qos_profile))
-for _feat, (_model, _provider) in sorted(_active_qos_profile.items()):
-    logger.info('  QoS %s: %s [%s]', _feat, _model, _provider)
+for _feat, _info in sorted(get_qos_info().items()):
+    logger.info('  QoS %s: %s [%s]', _feat, _info['model'], _info['provider'])
 logger.info('BYOK QoS profile=%s', get_byok_profile_name())
 
 _so_gemini = {f for f in _active_qos_profile if is_structured_output_feature(f) and _get_model_config(f)[1] == 'gemini'}

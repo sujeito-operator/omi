@@ -77,7 +77,7 @@ model_config_features:
 surfaces:
   - surface: public_shared_conversation_chat
     code_path: backend/routers/public_shared_conversation_chat.py:public_shared_conversation_chat
-    current_provider_model: gateway-only openai/gpt-5-nano
+    current_provider_model: gateway-only openai/gpt-5-nano, switching to openrouter openai/gpt-5.6-luna when OPENROUTER_API_KEY is configured
     request_shape: non-streaming plain chat with server-resolved shared transcript, at most eight user/assistant history entries, and no tools or retrieval
     gateway_lane_capability_needed: dedicated non-streaming no-tools omi:auto:public-shared-conversation-chat lane
     migration_status: gateway_only_trusted_frontend_bff

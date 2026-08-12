@@ -37,6 +37,7 @@ from utils.llm.clients import (
 
 SIMPLE_PROMPT = "Reply with exactly one word: hello"
 HAS_GEMINI_KEY = bool(os.environ.get('GEMINI_API_KEY', ''))
+HAS_OPENROUTER_KEY = bool(os.environ.get('OPENROUTER_API_KEY', ''))
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +161,12 @@ class TestPremiumVision:
 # Premium profile — gemini-2.5-flash-lite features (free-text cost optimization)
 # ---------------------------------------------------------------------------
 class TestPremiumGemini:
-    """Test gemini-2.5-flash-lite features in premium profile respond to real prompts."""
+    """Test premium-profile Gemini features respond to real prompts.
+
+    When OPENROUTER_API_KEY is configured these features resolve to the
+    key-gated OpenRouter preference instead of direct Gemini, so the
+    expected model follows the effective provider.
+    """
 
     GEMINI_FEATURES = [
         'session_titles',
@@ -170,11 +176,17 @@ class TestPremiumGemini:
         'trends',
     ]
 
-    @pytest.mark.skipif(not HAS_GEMINI_KEY, reason="GEMINI_API_KEY not set")
+    @pytest.mark.skipif(not (HAS_GEMINI_KEY or HAS_OPENROUTER_KEY), reason="no Gemini/OpenRouter key set")
     @pytest.mark.parametrize("feature", GEMINI_FEATURES)
     def test_gemini_feature_responds(self, feature):
         model = get_model(feature)
-        assert model == 'gemini-2.5-flash-lite', f"{feature} should be gemini-2.5-flash-lite in premium, got {model}"
+        provider = get_provider(feature)
+        if provider == 'gemini':
+            assert (
+                model == 'gemini-2.5-flash-lite'
+            ), f"{feature} should be gemini-2.5-flash-lite in premium, got {model}"
+        else:
+            assert provider == 'openrouter', f"{feature} resolved to unexpected provider {provider}"
         llm = get_llm(feature)
         response = llm.invoke(SIMPLE_PROMPT)
         assert response.content.strip(), f"{feature} ({model}) returned empty response"
