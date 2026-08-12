@@ -224,3 +224,5 @@ tests/unit/test_bounded_firestore_list_reads.py::test_legacy_get_memories_no_fir
 # File-isolation amortizes llm_gateway app/provider imports into the first oracle call.
 tests/unit/test_replay_llm_gateway_fake_upstream_oracle.py::test_loopback_oracle_bypasses_ambient_proxy_configuration
 tests/unit/test_agent_proxy_async_boundaries.py::test_persistent_lease_heartbeat_failure_fails_closed_before_ttl_expires
+# Building the router harness for test_desktop_message_quota_router amortizes the import into the first test.
+tests/unit/test_desktop_message_quota_router.py::test_desktop_human_message_records_quota_once_after_persistence_acceptance
