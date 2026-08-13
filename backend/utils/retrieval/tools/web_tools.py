@@ -377,11 +377,6 @@ async def _resolve_public_ip(hostname: str) -> Optional[str]:
     return None
 
 
-async def _hostname_is_public(hostname: str) -> bool:
-    """Resolve hostname and return True only if every IP is globally routable."""
-    return await _resolve_public_ip(hostname) is not None
-
-
 class _TextExtractor(HTMLParser):
     def __init__(self) -> None:
         super().__init__()

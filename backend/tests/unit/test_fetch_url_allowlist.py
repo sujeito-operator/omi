@@ -15,8 +15,8 @@ from utils.retrieval.agentic import (
 )
 from utils.retrieval.tools.web_tools import (
     URL_NOT_ALLOWLISTED_MESSAGE,
-    _hostname_is_public,
     _is_disallowed_ip,
+    _resolve_public_ip,
     extract_urls_from_text,
     extract_user_turn_urls,
     fetch_url_tool,
@@ -455,7 +455,7 @@ class TestEgressAddressBounds:
     @pytest.mark.parametrize('address', NON_GLOBAL_DESTINATIONS)
     async def test_hostname_resolving_to_non_global_address_is_not_public(self, address):
         with patch.object(socket, 'getaddrinfo', _fake_getaddrinfo(address)):
-            assert await _hostname_is_public('reserved.example') is False
+            assert await _resolve_public_ip('reserved.example') is None
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize('address', ['0.0.0.0', '198.18.0.1', '224.0.0.1', '255.255.255.255', '::', 'ff02::1'])
