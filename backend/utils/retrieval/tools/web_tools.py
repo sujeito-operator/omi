@@ -15,7 +15,7 @@ from urllib.parse import urljoin, urlparse
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool  # type: ignore[reportUnknownVariableType]  # langchain @tool decorator partially typed
 
-from utils.http_client import get_web_fetch_client
+from utils.http_client import get_web_fetch_client, pin_to_resolved_ip
 from utils.log_sanitizer import sanitize
 
 logger = logging.getLogger(__name__)
@@ -354,16 +354,32 @@ def _is_disallowed_ip(ip_str: str) -> bool:
     return not ip.is_global
 
 
-async def _hostname_is_public(hostname: str) -> bool:
-    """Resolve hostname and return True only if every IP is globally routable."""
+async def _resolve_public_ip(hostname: str) -> Optional[str]:
+    """Resolve *hostname* and return its first globally routable IP, or None.
+
+    The returned address is the single DNS lookup this fetch trusts. The HTTP
+    client must connect to that exact address (see `pin_to_resolved_ip`)
+    instead of re-resolving the hostname at connect time — otherwise a DNS
+    record can be swapped between this check and the real connect (DNS
+    rebinding), and the validation is worthless.
+    """
     try:
         loop = asyncio.get_running_loop()
         results = await loop.getaddrinfo(hostname, None)
-        if not results:
-            return False
-        return not any(_is_disallowed_ip(r[4][0]) for r in results)
     except Exception:
-        return False
+        return None
+    if not results:
+        return None
+    for r in results:
+        ip = r[4][0]
+        if not _is_disallowed_ip(ip):
+            return ip
+    return None
+
+
+async def _hostname_is_public(hostname: str) -> bool:
+    """Resolve hostname and return True only if every IP is globally routable."""
+    return await _resolve_public_ip(hostname) is not None
 
 
 class _TextExtractor(HTMLParser):
@@ -426,15 +442,29 @@ async def _fetch_page(
         if not hostname:
             raise ValueError('Invalid URL: no hostname')
 
-        if not await _hostname_is_public(hostname):
+        resolved_ip = await _resolve_public_ip(hostname)
+        if resolved_ip is None:
             raise ValueError('URL resolves to a private or reserved address')
+
+        # Connect to the exact IP the guard resolved, keeping the original
+        # hostname for the Host header and TLS SNI. Re-resolving the hostname
+        # at connect time would reopen the DNS-rebinding gap.
+        pinned_url, pin_extra = pin_to_resolved_ip(url, resolved_ip)
+        request_headers = {**headers, **pin_extra['headers']}
+        request_extensions = pin_extra.get('extensions')
 
         redirect_url = None
         status = 0
         content_type = ''
         body_text = ''
 
-        async with client.stream('GET', url, headers=headers, follow_redirects=False) as response:
+        async with client.stream(
+            'GET',
+            pinned_url,
+            headers=request_headers,
+            follow_redirects=False,
+            extensions=request_extensions,
+        ) as response:
             status = response.status_code
             content_type = response.headers.get('content-type', '')
 

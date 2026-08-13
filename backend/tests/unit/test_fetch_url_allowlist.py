@@ -3,6 +3,7 @@
 import socket
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
+from urllib.parse import urlparse
 
 import pytest
 from langchain_core.runnables import RunnableConfig
@@ -325,15 +326,15 @@ class TestRuntimeEnforcement:
         with (
             patch('utils.retrieval.tools.web_tools.get_web_fetch_client', return_value=client),
             patch(
-                'utils.retrieval.tools.web_tools._hostname_is_public',
+                'utils.retrieval.tools.web_tools._resolve_public_ip',
                 new_callable=AsyncMock,
-                return_value=True,
+                return_value='93.184.216.34',
             ),
         ):
             result = await fetch_url_tool.ainvoke({'url': allowed}, config=config)
 
         assert 'Redirect target is not in the current-turn user allowlist' in result
-        assert client.urls == [allowed]
+        assert client.urls == ['https://93.184.216.34/short']
 
     @pytest.mark.asyncio
     async def test_allows_redirect_to_allowlisted_url(self):
@@ -373,14 +374,17 @@ class TestRuntimeEnforcement:
         with (
             patch('utils.retrieval.tools.web_tools.get_web_fetch_client', return_value=client),
             patch(
-                'utils.retrieval.tools.web_tools._hostname_is_public',
+                'utils.retrieval.tools.web_tools._resolve_public_ip',
                 new_callable=AsyncMock,
-                return_value=True,
+                return_value='93.184.216.34',
             ),
         ):
             result = await fetch_url_tool.ainvoke({'url': start}, config=config)
 
-        assert client.urls == [start, target]
+        assert client.urls == [
+            'https://93.184.216.34/short',
+            'https://93.184.216.34/full',
+        ]
         assert 'Content from' in result
         assert 'Hello' in result
 
@@ -512,8 +516,62 @@ class TestEgressAddressBounds:
         ):
             result = await fetch_url_tool.ainvoke({'url': start}, config=config)
 
-        assert client.urls == [start]
+        assert client.urls == ['https://93.184.216.34/short']
         assert 'private or reserved address' in result
+
+    @pytest.mark.asyncio
+    async def test_fetch_connects_to_pinned_ip_not_re_resolved_hostname(self):
+        """The guard's resolved public IP must be the only lookup: the HTTP
+        client receives the pinned IP (with the original hostname only as Host
+        header/SNI), so a request-time re-resolution cannot be redirected to a
+        private address. Regression: the guard returned a public IP for the
+        hostname, but a second lookup at connect time would hit the cloud
+        metadata address 169.254.169.254.
+        """
+        url = 'https://trusted.example/article'
+        config = RunnableConfig(configurable={'user_provided_urls': [url]})
+
+        class _FakeResponse:
+            def __init__(self):
+                self.status_code = 200
+                self.headers = {'content-type': 'text/html'}
+                self._body = b'<p>Hello</p>'
+
+            async def aiter_bytes(self, chunk_size=8192):
+                yield self._body
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+        class _MetadataRebindClient:
+            """A client that would reach 169.254.169.254 if it re-resolved the
+            hostname at connect time. It must instead be handed the pinned IP."""
+
+            def __init__(self):
+                self.urls = []
+                self.last_kwargs = None
+
+            def stream(self, method, url, **kwargs):
+                self.urls.append(url)
+                self.last_kwargs = kwargs
+                if urlparse(url).hostname == 'trusted.example':
+                    raise AssertionError('client received the hostname and would re-resolve it to 169.254.169.254')
+                return _FakeResponse()
+
+        client = _MetadataRebindClient()
+        with (
+            patch('utils.retrieval.tools.web_tools.get_web_fetch_client', return_value=client),
+            patch.object(socket, 'getaddrinfo', _fake_getaddrinfo('93.184.216.34')),
+        ):
+            result = await fetch_url_tool.ainvoke({'url': url}, config=config)
+
+        assert client.urls == ['https://93.184.216.34/article']
+        assert client.last_kwargs['headers']['Host'] == 'trusted.example'
+        assert client.last_kwargs['extensions']['sni_hostname'] == 'trusted.example'
+        assert 'Hello' in result
 
 
 class TestModuleStubIsolation:
