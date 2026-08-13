@@ -25,7 +25,6 @@ extension SettingsContentView {
       // The three assistants that read your screen, and the throttle they share. Each card carries
       // the switch that stops its assistant — which, until this pane rendered them, no surface in the
       // app did. `advanced.taskassistant` is also where the Tasks page's gear button deep-links.
-      //
       // Hidden while screen frames are not distributed to assistants: all three are frame-driven
       // only (no transcript or conversation input), so with `assistantFrameProcessingEnabled` off
       // every one of these controls — the enable switches, intervals, prompts, app lists, and the
@@ -35,7 +34,7 @@ extension SettingsContentView {
       if ProactiveCapturePolicy.assistantFrameProcessingEnabled {
         advancedCategoryHeader(title: "Task Assistant", icon: "checklist")
         taskAssistantSubsection
-        advancedCategoryHeader(title: "Insight Assistant", icon: "lightbulb.fill")
+        advancedCategoryHeader(title: "Insight Assistant", icon: ProactiveNotificationBadge.insightSystemImage)
         insightAssistantSubsection
         advancedCategoryHeader(title: "Memory Assistant", icon: "brain.head.profile")
         memoryAssistantSubsection

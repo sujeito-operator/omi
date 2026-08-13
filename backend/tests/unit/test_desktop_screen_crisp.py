@@ -24,33 +24,33 @@ def test_screen_activity_sync_is_a_drain_that_stores_nothing():
     and no vector. It is temporary; the real fix is the client change that
     stops uploading.
     """
-    import database.screen_activity as screen_activity_db
-    import database.vector_db as vector_db
-
-    def fail(*_args, **_kwargs):
-        raise AssertionError("retired screen-activity sync must never persist screen data")
-
-    with (
-        patch.object(screen_activity_db, "upsert_screen_activity", fail),
-        patch.object(vector_db, "upsert_screen_activity_vectors", fail, create=True),
-    ):
-        response = make_client().post(
-            "/v1/screen-activity/sync",
-            json={
-                "rows": [
-                    {
-                        "id": 1,
-                        "timestamp": "2026-07-26T00:00:00Z",
-                        "appName": "Safari",
-                        "ocrText": "secret on-screen text",
-                        "embedding": [0.1, 0.2],
-                    }
-                ]
-            },
-        )
+    response = make_client().post(
+        "/v1/screen-activity/sync",
+        json={
+            "rows": [
+                {
+                    "id": 1,
+                    "timestamp": "2026-07-26T00:00:00Z",
+                    "appName": "Safari",
+                    "ocrText": "secret on-screen text",
+                    "embedding": [0.1, 0.2],
+                }
+            ]
+        },
+    )
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "written": 0, "retired": True}
+
+    # Static tripwire (not behavioral coverage): the router must not import the
+    # screen-activity persistence layers, which is the only way it could write
+    # anything through them.
+    import inspect
+
+    router_source = inspect.getsource(desktop_screen_crisp)
+    assert "database.screen_activity" not in router_source
+    assert "database.vector_db" not in router_source
+    assert "upsert_screen_activity" not in router_source
 
 
 def test_crisp_unread_preserves_operator_text_shape(monkeypatch):

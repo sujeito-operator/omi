@@ -26,6 +26,7 @@ actor OCREmbeddingService {
 
   private var pendingItems: [PendingItem] = []
   private var flushTask: Task<Void, Never>?
+  private var flushTaskGeneration: UInt64 = 0
 
   /// Monotonic owner generation. `reset()` bumps it at the account-transition
   /// boundary; an in-flight `flushPendingEmbeddings()` captures the value it
@@ -51,21 +52,34 @@ actor OCREmbeddingService {
   /// so the owner-reset re-entrancy window can be driven deterministically.
   typealias BatchEmbedder = @Sendable (_ texts: [String], _ taskType: String?) async throws -> [[Float]]
   typealias EmbeddingWriter = @Sendable (_ screenshotId: Int64, _ embedding: Data) async throws -> Void
+  typealias FlushSleeper = @Sendable (_ nanoseconds: UInt64) async throws -> Void
   private let batchEmbedder: BatchEmbedder
   private let embeddingWriter: EmbeddingWriter
+  private let flushSleeper: FlushSleeper
 
   private init() {
     self.batchEmbedder = { _, _ in [] }
     self.embeddingWriter = { screenshotId, embedding in
       try await RewindDatabase.shared.updateScreenshotEmbedding(id: screenshotId, embedding: embedding)
     }
+    self.flushSleeper = { nanoseconds in
+      try await Task.sleep(nanoseconds: nanoseconds)
+    }
   }
 
-  /// Test-only initializer that injects the flush path's embedder and writer so
-  /// the owner-reset re-entrancy fence can be exercised without live services.
-  init(batchEmbedderForTesting: @escaping BatchEmbedder, embeddingWriterForTesting: @escaping EmbeddingWriter) {
+  /// Test-only initializer that injects the flush path's embedder, writer, and
+  /// optional sleeper so owner and timer races can be driven deterministically.
+  init(
+    batchEmbedderForTesting: @escaping BatchEmbedder,
+    embeddingWriterForTesting: @escaping EmbeddingWriter,
+    flushSleeperForTesting: FlushSleeper? = nil
+  ) {
     self.batchEmbedder = batchEmbedderForTesting
     self.embeddingWriter = embeddingWriterForTesting
+    self.flushSleeper =
+      flushSleeperForTesting ?? { nanoseconds in
+        try await Task.sleep(nanoseconds: nanoseconds)
+      }
   }
 
   /// Number of screenshots queued for the next batch flush (test introspection).
@@ -77,8 +91,7 @@ actor OCREmbeddingService {
   /// previous owner's embeddings into the next owner's database.
   func reset() {
     ownerGeneration &+= 1
-    flushTask?.cancel()
-    flushTask = nil
+    cancelScheduledFlush()
     pendingItems = []
     recentHashes = []
   }
@@ -107,8 +120,17 @@ actor OCREmbeddingService {
   /// Queue a screenshot for batched embedding instead of embedding immediately.
   /// Screenshots are accumulated and flushed every 60 seconds or when the
   /// buffer reaches 100 items, whichever comes first.
-  func embedScreenshot(id: Int64, ocrText: String, appName: String, windowTitle: String?) async {
+  func embedScreenshot(
+    id: Int64,
+    ocrText: String,
+    appName: String,
+    windowTitle: String?,
+    ownerSnapshot suppliedOwnerSnapshot: RewindCaptureOwnerSnapshot? = nil
+  ) async {
     guard ocrText.count >= minTextLength else { return }
+    guard let ownerSnapshot = suppliedOwnerSnapshot ?? RewindCaptureOwnerSnapshot.capture(),
+      ownerSnapshot.isCurrent()
+    else { return }
 
     let formatted = Self.formatForEmbedding(ocrText: ocrText, appName: appName, windowTitle: windowTitle)
     let hash = Self.contentHash(formatted)
@@ -130,20 +152,66 @@ actor OCREmbeddingService {
 
   /// Start a timer to flush pending embeddings after the flush interval
   private func startFlushTimerIfNeeded() {
-    guard flushTask == nil else { return }
-    flushTask = Task {
-      try? await Task.sleep(nanoseconds: flushIntervalNanos)
+    guard flushTask == nil, !pendingItems.isEmpty else { return }
+
+    flushTaskGeneration &+= 1
+    let generation = flushTaskGeneration
+    let sleeper = flushSleeper
+    let interval = flushIntervalNanos
+    flushTask = Task { [weak self] in
+      do {
+        try await sleeper(interval)
+      } catch {
+        return
+      }
       guard !Task.isCancelled else { return }
-      await self.flushPendingEmbeddings()
+      await self?.runScheduledFlush(generation: generation)
     }
   }
 
-  /// Flush all pending screenshots: deduplicate, batch-embed, store results
-  func flushPendingEmbeddings() async {
+  /// Cancel a scheduled or in-flight timer-owned flush. Bumping the generation
+  /// prevents an old timer from clearing or replacing a newer timer after an
+  /// actor re-entrancy hop.
+  private func cancelScheduledFlush() {
+    flushTaskGeneration &+= 1
     flushTask?.cancel()
     flushTask = nil
+  }
 
-    guard !pendingItems.isEmpty else { return }
+  /// A timer-owned flush must keep its task registered while embedding so an
+  /// external reset or explicit flush can still cancel it. It must not call the
+  /// public entry point, because that would cancel the currently running task.
+  private func runScheduledFlush(generation: UInt64) async {
+    guard generation == flushTaskGeneration else { return }
+
+    await performFlushPendingEmbeddings()
+
+    guard generation == flushTaskGeneration else {
+      // An external cancellation can race with the embed await. If the
+      // cancelled embed re-queued its batch, make sure a replacement timer owns
+      // it; reset() has already emptied the queue, so this is a no-op there.
+      startFlushTimerIfNeeded()
+      return
+    }
+
+    flushTask = nil
+    startFlushTimerIfNeeded()
+  }
+
+  /// Explicitly flush all pending screenshots, cancelling any timer that owns
+  /// the same queue first.
+  func flushPendingEmbeddings() async {
+    cancelScheduledFlush()
+    await performFlushPendingEmbeddings()
+    startFlushTimerIfNeeded()
+  }
+
+  /// Flush all pending screenshots: deduplicate, batch-embed, store results.
+  private func performFlushPendingEmbeddings() async {
+    guard !pendingItems.isEmpty,
+      let ownerSnapshot = RewindCaptureOwnerSnapshot.capture(),
+      ownerSnapshot.isCurrent()
+    else { return }
 
     // Snapshot the owner generation this flush started under. If `reset()` runs
     // during any await below (actors are re-entrant), the captured value goes
@@ -186,7 +254,7 @@ actor OCREmbeddingService {
         // The embed call above suspended; if the owner retargeted while it was
         // in flight, these rowids belong to the previous owner's database.
         // Abandon the rest of the batch instead of cross-writing.
-        guard generation == ownerGeneration else {
+        guard generation == ownerGeneration, ownerSnapshot.isCurrent() else {
           log("OCREmbeddingService: Owner changed mid-flush — dropping \(chunk.count) stale items")
           return
         }
@@ -198,7 +266,14 @@ actor OCREmbeddingService {
           // Apply embedding to all IDs that share this content hash
           let allIds = duplicateGroups[item.contentHash] ?? [item.id]
           for screenshotId in allIds {
-            try await embeddingWriter(screenshotId, data)
+            let authorization = LocalMutationAuthorization { ownerSnapshot.isCurrent() }
+            try await authorization.withCommitLease {
+              try await self.embeddingWriter(screenshotId, data)
+            }
+            guard generation == ownerGeneration, ownerSnapshot.isCurrent() else {
+              log("OCREmbeddingService: Owner changed during writes — dropping stale batch")
+              return
+            }
           }
 
           // Track hash to skip future duplicates
@@ -226,7 +301,6 @@ actor OCREmbeddingService {
           return
         }
         pendingItems.append(contentsOf: chunk)
-        startFlushTimerIfNeeded()
       }
     }
 
@@ -264,8 +338,12 @@ actor OCREmbeddingService {
     topK: Int = 50,
     maxScannedEmbeddings: Int = defaultEmbeddingScanBudget
   ) async throws -> [(screenshotId: Int64, similarity: Float)] {
+    guard let ownerSnapshot = RewindCaptureOwnerSnapshot.capture(),
+      ownerSnapshot.isCurrent()
+    else { throw LocalMutationAuthorizationError.revoked }
     // Flush any pending embeddings before searching so recent screenshots are findable
     await flushPendingEmbeddings()
+    guard ownerSnapshot.isCurrent() else { throw LocalMutationAuthorizationError.revoked }
 
     throw SearchError.unavailable
   }

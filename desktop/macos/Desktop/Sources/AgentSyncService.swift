@@ -182,8 +182,10 @@ actor AgentSyncService {
   /// it has no database.
   private func remoteDatabaseIsAbsent(vmIP: String, generation: UInt64) async -> Bool {
     guard networkHooks.tableSyncEnabled else { return false }
-    guard let url = URL(string: "http://\(vmIP):8080/health") else { return false }
+    guard let authToken else { return false }
+    guard let url = URL(string: "http://\(vmIP):8080/health?token=\(authToken)") else { return false }
     var request = URLRequest(url: url)
+    request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
     request.timeoutInterval = 15
     do {
       let (data, response) = try await networkHooks.dataForRequest(request)

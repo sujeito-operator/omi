@@ -298,11 +298,12 @@ final class AgentSyncBatchQueryTests: XCTestCase {
   /// only future rows and never the user's existing action items, memories,
   /// transcriptions, or notes.
   func testStartResetsCursorsWhenTheVMReportsNoDatabase() async {
-    let ownerFixture = RuntimeOwnerAuthorityTestFixture()
+    let ownerFixture = await RuntimeOwnerAuthorityTestFixture()
     await ownerFixture.establish(authOwnerID: "agent-sync-cursor-owner")
     defer { Task { await ownerFixture.restore() } }
     let cursorKey = "agentSync_cursors.agent-sync-cursor-owner"
-    let seeded = try? JSONEncoder().encode(["memories": ["lastId": 42, "lastUpdatedAt": "2026-01-01T00:00:00"]])
+    let seeded = try? JSONEncoder().encode(
+      ["memories": ["lastId": 42, "lastUpdatedAt": "2026-01-01T00:00:00"]] as [String: [String: Any]])
     UserDefaults.standard.set(seeded, forKey: cursorKey)
     defer { UserDefaults.standard.removeObject(forKey: cursorKey) }
 
@@ -310,6 +311,17 @@ final class AgentSyncBatchQueryTests: XCTestCase {
       networkHooks: AgentSyncService.NetworkHooks(
         fetchIDToken: { "test-firebase-token" },
         dataForRequest: { request in
+          // The health probe must authenticate as the VM token, otherwise a
+          // fresh VM (which the backend requires auth to report on) would be
+          // treated as reachable-but-ready and the persisted cursors kept.
+          XCTAssertEqual(
+            request.value(forHTTPHeaderField: "Authorization"),
+            "Bearer vm-token",
+            "the fresh-VM health probe must send the VM auth token")
+          XCTAssertEqual(
+            request.url?.query,
+            "token=vm-token",
+            "the fresh-VM health probe must send the VM auth token as the query token")
           let body = try JSONSerialization.data(withJSONObject: ["databaseReady": false])
           guard let url = request.url,
             let response = HTTPURLResponse(

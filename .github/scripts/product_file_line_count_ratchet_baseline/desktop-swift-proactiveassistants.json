@@ -1,11 +1,11 @@
 {
   "files": {
-    "desktop/macos/Desktop/Sources/ProactiveAssistants/Assistants/TaskExtraction/TaskAssistant.swift": 1741,
-    "desktop/macos/Desktop/Sources/ProactiveAssistants/ProactiveAssistantsPlugin.swift": 1654
+    "desktop/macos/Desktop/Sources/ProactiveAssistants/Assistants/TaskExtraction/TaskAssistant.swift": 1792,
+    "desktop/macos/Desktop/Sources/ProactiveAssistants/ProactiveAssistantsPlugin.swift": 1758
   },
   "raise_justifications": {
     "desktop/macos/Desktop/Sources/ProactiveAssistants/Assistants/TaskExtraction/TaskAssistant.swift": "Task candidate context now carries only backend action-item IDs, while local SQLite/staged evidence remains id-less so the model cannot target it for a backend mutation.",
-    "desktop/macos/Desktop/Sources/ProactiveAssistants/ProactiveAssistantsPlugin.swift": "CaptureGate transition diagnostics + kCGAnyInputEventType idle-sentinel fix. +3 gates all proactive assistant frame processing behind the privacy policy while leaving local Rewind capture intact."
+    "desktop/macos/Desktop/Sources/ProactiveAssistants/ProactiveAssistantsPlugin.swift": "CaptureGate transition diagnostics + kCGAnyInputEventType idle-sentinel fix. +3 gates all proactive assistant frame processing behind the privacy policy while leaving local Rewind capture intact. Merge keeps main's ResumeMode alongside the frame-processing gate."
   },
   "threshold": 1500
 }
