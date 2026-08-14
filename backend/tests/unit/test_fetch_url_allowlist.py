@@ -520,6 +520,51 @@ class TestEgressAddressBounds:
         assert 'private or reserved address' in result
 
     @pytest.mark.asyncio
+    async def test_redirect_with_mixed_case_scheme_is_accepted(self):
+        """A Location header may spell the scheme in any case; the redirect
+        target must be accepted case-insensitively like the entry-point URL.
+        Regression: `Http://...` after urljoin failed the lowercase startswith
+        check and aborted the fetch of a valid, user-allowlisted redirect."""
+        start = 'https://trusted.example/short'
+        target = 'Http://trusted.example/full'
+        config = RunnableConfig(configurable={'user_provided_urls': [start, target]})
+
+        class _FakeResponse:
+            def __init__(self, status_code, location=None):
+                self.status_code = status_code
+                self.headers = {'location': location} if location else {'content-type': 'text/html'}
+                self._body = b'<p>Landed</p>'
+
+            async def aiter_bytes(self, chunk_size=8192):
+                yield self._body
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+        class _FakeClient:
+            def __init__(self):
+                self.urls = []
+
+            def stream(self, method, url, **kwargs):
+                self.urls.append(url)
+                if len(self.urls) == 1:
+                    return _FakeResponse(302, location=target)
+                return _FakeResponse(200)
+
+        client = _FakeClient()
+        with (
+            patch('utils.retrieval.tools.web_tools.get_web_fetch_client', return_value=client),
+            patch.object(socket, 'getaddrinfo', _fake_getaddrinfo('93.184.216.34')),
+        ):
+            result = await fetch_url_tool.ainvoke({'url': start}, config=config)
+
+        assert 'Landed' in result
+        assert client.urls == ['https://93.184.216.34/short', 'http://93.184.216.34/full']
+
+    @pytest.mark.asyncio
     async def test_fetch_connects_to_pinned_ip_not_re_resolved_hostname(self):
         """The guard's resolved public IP must be the only lookup: the HTTP
         client receives the pinned IP (with the original hostname only as Host

@@ -429,7 +429,7 @@ async def _fetch_page(
     client = get_web_fetch_client()
 
     for _ in range(_MAX_REDIRECTS + 1):
-        if not url.startswith(('http://', 'https://')):
+        if not url.lower().startswith(('http://', 'https://')):
             raise ValueError('Redirect target must use http:// or https://')
 
         parsed = urlparse(url)
