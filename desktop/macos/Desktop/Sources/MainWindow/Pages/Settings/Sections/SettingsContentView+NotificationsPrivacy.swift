@@ -237,43 +237,6 @@ extension SettingsContentView {
     memoryNotificationsEnabled = MemoryAssistantSettings.shared.notificationsEnabled
   }
 
-  func notificationActivePeriodPicker(
-    selection: Binding<Int>, accessibilityLabel: String
-  ) -> some View {
-    Menu {
-      ForEach(Array(stride(from: 0, to: 24 * 60, by: 15)), id: \.self) { minute in
-        Button {
-          selection.wrappedValue = minute
-        } label: {
-          if selection.wrappedValue == minute {
-            Label(
-              SettingsControlMetrics.notificationPeriodLabel(forMinute: minute),
-              systemImage: "checkmark")
-          } else {
-            Text(SettingsControlMetrics.notificationPeriodLabel(forMinute: minute))
-          }
-        }
-      }
-    } label: {
-      Text(SettingsControlMetrics.notificationPeriodLabel(forMinute: selection.wrappedValue))
-        .monospacedDigit()
-        .scaledFont(size: OmiType.body, weight: .semibold)
-        .foregroundColor(Ink.primary)
-        .frame(minWidth: 52)
-    }
-    .menuStyle(.borderlessButton)
-    .menuIndicator(.hidden)
-    .buttonStyle(.plain)
-    .fixedSize()
-    .accessibilityLabel(accessibilityLabel)
-  }
-
-  func saveNotificationActivePeriod() {
-    NotificationService.updateActivePeriod(
-      startMinute: notificationActiveStartMinute,
-      endMinute: notificationActiveEndMinute)
-  }
-
   // MARK: - Privacy Section
 
   var privacySection: some View {
