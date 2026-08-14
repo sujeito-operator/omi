@@ -52,7 +52,6 @@ from utils.memory.memory_service import (
 from utils.memory.memory_api_contract import MemoryApiExposure, memory_api_payload
 from testing.parity_pack_v0.live_capture import capture_memory_write
 from utils.memory.memory_system import MemorySystem
-from utils.memory.surface_routing import pin_memory_system
 from utils.memory.product_authorization import (
     ProductAuthorizationContext,
     authorize_memory_external_default_memory_read,
@@ -845,8 +844,6 @@ def execute_tool(
     auth_context: Optional[ProductAuthorizationContext] = None,
 ) -> Dict[str, Any]:
     """Execute an MCP tool and return the result. Raises ToolExecutionError on failure."""
-    memory_system = pin_memory_system(user_id, db_client=db)
-
     if tool_name == "memory_platform":
         return build_mcp_memory_platform_payload()
 
