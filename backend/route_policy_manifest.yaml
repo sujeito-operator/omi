@@ -99,6 +99,10 @@ routes:
     policy: *desktop_migration_policy
   - route_type: http
     method: POST
+    path: /v2/apps/{app_id}/reject
+    policy: *desktop_migration_policy
+  - route_type: http
+    method: POST
     path: /v2/realtime/session
     policy: *desktop_migration_policy
   - route_type: http

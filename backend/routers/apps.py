@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 import httpx
 from typing import List, Optional
 from urllib.parse import urlparse
-from pydantic import BaseModel as PydanticBaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel as PydanticBaseModel, ConfigDict, Field, ValidationError, field_validator
 from ulid import ULID
 from fastapi import APIRouter, Body, Depends, Form, UploadFile, File, HTTPException, Header, Query
 from fastapi.responses import HTMLResponse
@@ -361,6 +361,18 @@ class PersonaRecordResponse(App):
 # ******************************************************
 # ******************* REQUEST MODELS *******************
 # ******************************************************
+
+
+class AppRejectRequest(PydanticBaseModel):
+    reason: str = Field(min_length=1, max_length=500)
+
+    @field_validator('reason')
+    @classmethod
+    def validate_reason(cls, value: str) -> str:
+        reason = value.strip()
+        if not reason:
+            raise ValueError('reason must not be blank')
+        return reason
 
 
 class ReviewAppRequest(PydanticBaseModel):
@@ -2274,11 +2286,28 @@ def reject_app(app_id: str, uid: str, secret_key: str = Header(...)):
     invalidate_approved_apps_cache()  # App removed from public list, invalidate cache
     delete_app_cache_by_id(app_id)
     app = get_available_app_by_id(app_id, uid)
-    # TODO: Add reason for rejection in payload and also redirect to the app page
     send_notification(
         uid,
         'App Rejected 😔',
         f'Your app {app["name"]} has been rejected. Please make the necessary changes and resubmit for approval.',
+        data={'navigate_to': f'/apps/{app_id}'},
+    )
+    return {'status': 'ok'}
+
+
+@router.post('/v2/apps/{app_id}/reject', tags=['v2'], response_model=AppMutationResponse)
+def reject_app_v2(app_id: str, uid: str, data: AppRejectRequest, secret_key: str = Header(...)):
+    if secret_key != os.getenv('ADMIN_KEY'):
+        raise HTTPException(status_code=403, detail='You are not authorized to perform this action')
+    change_app_approval_status(app_id, False)
+    invalidate_approved_apps_cache()  # App removed from public list, invalidate cache
+    delete_app_cache_by_id(app_id)
+    app = get_available_app_by_id(app_id, uid)
+    send_notification(
+        app['uid'],
+        'App Rejected 😔',
+        f'Your app {app["name"]} has been rejected. {data.reason} Please make the necessary changes and resubmit for approval.',
+        data={'navigate_to': f'/apps/{app_id}', 'web_navigate_to': f'/my-apps/{app_id}'},
     )
     return {'status': 'ok'}
 

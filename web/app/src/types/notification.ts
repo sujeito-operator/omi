@@ -38,6 +38,7 @@ export interface NotificationPayload {
     notification_type?: NotificationType;
     notification_id?: string;
     navigate_to?: string;
+    web_navigate_to?: string;
     title?: string;
     body?: string;
     [key: string]: unknown;

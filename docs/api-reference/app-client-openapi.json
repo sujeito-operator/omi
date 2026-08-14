@@ -3106,6 +3106,21 @@
         "title": "AppPromptsGenerationResponse",
         "type": "object"
       },
+      "AppRejectRequest": {
+        "properties": {
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "AppRejectRequest",
+        "type": "object"
+      },
       "AppResult": {
         "properties": {
           "app_id": {
@@ -56420,6 +56435,84 @@
           }
         ],
         "summary": "Search Apps",
+        "tags": [
+          "v2"
+        ]
+      }
+    },
+    "/v2/apps/{app_id}/reject": {
+      "post": {
+        "operationId": "reject_app_v2_v2_apps__app_id__reject_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_id",
+            "required": true,
+            "schema": {
+              "title": "App Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "uid",
+            "required": true,
+            "schema": {
+              "title": "Uid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "secret-key",
+            "required": true,
+            "schema": {
+              "title": "Secret-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppRejectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppMutationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "firebaseBearer": []
+          }
+        ],
+        "summary": "Reject App V2",
         "tags": [
           "v2"
         ]

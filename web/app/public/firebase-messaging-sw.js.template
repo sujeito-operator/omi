@@ -52,7 +52,7 @@ self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
   const data = event.notification.data || {};
-  const navigateTo = data.navigate_to;
+  const navigateTo = data.web_navigate_to || data.navigate_to;
 
   // Determine target URL based on notification data
   let targetUrl = self.location.origin;

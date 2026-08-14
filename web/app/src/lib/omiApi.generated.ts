@@ -451,6 +451,10 @@ export interface AppPromptsGenerationResponse {
   prompts: Array<string>;
 }
 
+export interface AppRejectRequest {
+  reason: string;
+}
+
 export interface AppResult {
   app_id: string | null;
   content: string;
@@ -4104,6 +4108,7 @@ export interface OmiApiSchemas {
   "AppPagination": AppPagination;
   "AppPaginationLinks": AppPaginationLinks;
   "AppPromptsGenerationResponse": AppPromptsGenerationResponse;
+  "AppRejectRequest": AppRejectRequest;
   "AppResult": AppResult;
   "AppReview": AppReview;
   "AppSearchFilters": AppSearchFilters;
@@ -8265,6 +8270,16 @@ export interface OmiApiPaths {
       operationId: "search_apps_v2_apps_search_get";
       responses: {
         "200": AppSearchResponse;
+        "401": void;
+        "422": HTTPValidationError;
+      };
+    };
+  };
+  "/v2/apps/{app_id}/reject": {
+    post: {
+      operationId: "reject_app_v2_v2_apps__app_id__reject_post";
+      responses: {
+        "200": AppMutationResponse;
         "401": void;
         "422": HTTPValidationError;
       };
@@ -15830,6 +15845,27 @@ export async function search_apps_v2_apps_search_get(query: { q?: string | null,
   return _res.status === 204 ? (undefined as any) : await _res.json();
 }
 
+export async function reject_app_v2_v2_apps__app_id__reject_post(path: { app_id: string }, query: { uid: string }, header: { secret_key: string }, body: AppRejectRequest, init?: OmiApiClientInit): Promise<AppMutationResponse> {
+  const _base = init?.baseURL ?? "";
+  const _path = `/v2/apps/${path.app_id}/reject`;
+  const _params = query ? Object.entries(query)
+    .filter(([, v]) => v !== undefined && v !== null)
+    .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join('&') : '';
+  const _search = _params ? `?${_params}` : "";
+  const _res = await fetch(`${_base}${_path}${_search}`, {
+    method: "POST",
+    headers: {
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+      ...(init?.token ? { Authorization: `Bearer ${init.token}` } : {}),
+      ...init?.headers,
+      "secret-key": String(header.secret_key),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!_res.ok) throw new OmiApiError(_res.status, _res);
+  return _res.status === 204 ? (undefined as any) : await _res.json();
+}
+
 export async function materialize_prompts_v2_chat_materialize_prompts_post(header: { authorization?: string, X_App_Platform?: string, X_Device_Id_Hash?: string, X_App_Version?: string }, body: MaterializePromptsRequest, init?: OmiApiClientInit): Promise<MaterializePromptsResponse> {
   const _base = init?.baseURL ?? "";
   const _path = `/v2/chat/materialize-prompts`;
@@ -16576,4 +16612,4 @@ export async function get_speech_profile_v4_speech_profile_get(header: { authori
   return _res.status === 204 ? (undefined as any) : await _res.json();
 }
 
-// Total: 401 client methods generated.
+// Total: 402 client methods generated.
