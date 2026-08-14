@@ -42,6 +42,10 @@ def fetch_default_product_memory_search(
     default visibility to `query_default_product_memory_items(...)`, then paginates
     the filtered/matched results. Archive remains unavailable here by design; use
     the explicit archive query seam for archive-capable product surfaces.
+
+    ``limit``/``offset`` bound only the returned page over the full per-user scan;
+    they are not backend work bounds (keyword matching runs in memory after the
+    authoritative items are streamed).
     """
 
     bounded_limit = _validate_limit(limit)
