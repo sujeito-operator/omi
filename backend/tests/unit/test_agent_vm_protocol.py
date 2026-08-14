@@ -867,6 +867,7 @@ def test_execute_sql_denies_destructive_queries(tmp_path: Path, query: str) -> N
     assert result["error"]
     assert [tuple(row) for row in module.runtime.db.execute("SELECT id FROM screenshots").fetchall()] == [("one",)]
 
+
 def test_sync_groups_rows_by_present_columns(tmp_path: Path) -> None:
     app, module = load_app(tmp_path)
     connection = sqlite3.connect(module.runtime.db_path)
