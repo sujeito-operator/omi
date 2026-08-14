@@ -193,7 +193,14 @@ def test_database_integrity_check_does_not_block_event_loop(tmp_path: Path, monk
         result = await upload_task
         return elapsed, result
 
-    timer = threading.Timer(0.2, release.set)
+    timer_fired = False
+
+    def hang_guard():
+        nonlocal timer_fired
+        timer_fired = True
+        release.set()
+
+    timer = threading.Timer(0.2, hang_guard)
     started_at = time.monotonic()
     timer.start()
     try:
@@ -203,7 +210,12 @@ def test_database_integrity_check_does_not_block_event_loop(tmp_path: Path, monk
         timer.cancel()
         module.runtime.close_database()
 
-    assert elapsed < 0.15
+    # The upload must release through its own path, not the 0.2 s hang guard:
+    # if the offloaded work never resumed, only the timer unblocks the await
+    # and the guard flag is set. The elapsed bound is deliberately generous —
+    # the precise signal is whether the guard fired, not a wall-clock race.
+    assert not timer_fired
+    assert elapsed < 2.0
     assert worker is not threading.main_thread()
     assert result == (len(payload), len(payload))
 
@@ -241,7 +253,14 @@ def test_database_upload_fsync_does_not_block_event_loop(tmp_path: Path, monkeyp
         result = await upload_task
         return elapsed, result
 
-    timer = threading.Timer(0.2, release.set)
+    timer_fired = False
+
+    def hang_guard():
+        nonlocal timer_fired
+        timer_fired = True
+        release.set()
+
+    timer = threading.Timer(0.2, hang_guard)
     started_at = time.monotonic()
     timer.start()
     try:
@@ -251,7 +270,9 @@ def test_database_upload_fsync_does_not_block_event_loop(tmp_path: Path, monkeyp
         timer.cancel()
         module.runtime.close_database()
 
-    assert elapsed < 0.15
+    # See the sibling test: the precise signal is the hang guard, not the wall clock.
+    assert not timer_fired
+    assert elapsed < 2.0
     assert worker is not threading.main_thread()
     assert result == (len(payload), len(payload))
 
@@ -303,7 +324,14 @@ def test_database_installation_is_offloaded_and_serialized_with_db_use(tmp_path:
         query_result = await query_task
         return query_blocked, result, query_result
 
-    timer = threading.Timer(0.2, release_install.set)
+    timer_fired = False
+
+    def hang_guard():
+        nonlocal timer_fired
+        timer_fired = True
+        release_install.set()
+
+    timer = threading.Timer(0.2, hang_guard)
     started_at = time.monotonic()
     timer.start()
     try:
@@ -313,7 +341,12 @@ def test_database_installation_is_offloaded_and_serialized_with_db_use(tmp_path:
         timer.cancel()
         module.runtime.close_database()
 
-    assert time.monotonic() - started_at < 0.15
+    # The install must release through its own path: if the query serialized
+    # behind the database install (the deadlock this test guards), only the
+    # 0.2 s hang guard unblocks it. The wall-clock bound is intentionally
+    # generous; the precise signal is whether the guard fired.
+    assert not timer_fired
+    assert time.monotonic() - started_at < 2.0
     assert install_thread is not threading.main_thread()
     assert query_blocked
     assert result == (len(payload), len(payload))
@@ -833,7 +866,6 @@ def test_execute_sql_denies_destructive_queries(tmp_path: Path, query: str) -> N
 
     assert result["error"]
     assert [tuple(row) for row in module.runtime.db.execute("SELECT id FROM screenshots").fetchall()] == [("one",)]
-
 
 def test_sync_groups_rows_by_present_columns(tmp_path: Path) -> None:
     app, module = load_app(tmp_path)
