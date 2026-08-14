@@ -1504,7 +1504,7 @@ def upload_file_chat(
 
 @router.post('/v1/files', response_model=List[FileChat], tags=['chat'])
 @max_part_size(CHAT_FILE_MAX_PART_SIZE)
-def upload_file_chat(
+def upload_file_chat_v1(
     files: List[UploadFile] = File(...),
     uid: str = Depends(auth.with_rate_limit(auth.get_current_user_uid, "file:upload")),
 ):
@@ -1559,7 +1559,7 @@ def upload_file_chat(
 
 
 @router.post('/v1/messages/{message_id}/report', tags=['chat'], response_model=dict)
-def report_message(message_id: str, uid: str = Depends(auth.get_current_user_uid)):
+def report_message_v1(message_id: str, uid: str = Depends(auth.get_current_user_uid)):
     result = chat_db.get_message(uid, message_id)
     if result is None:
         raise HTTPException(status_code=404, detail='Message not found')
@@ -1573,7 +1573,7 @@ def report_message(message_id: str, uid: str = Depends(auth.get_current_user_uid
 
 
 @router.delete('/v1/messages', tags=['chat'], response_model=Message)
-def clear_chat_messages(
+def clear_chat_messages_v1(
     plugin_id: Optional[str] = None, app_id: Optional[str] = None, uid: str = Depends(auth.get_current_user_uid)
 ):
     compat_app_id = app_id or plugin_id
@@ -1605,7 +1605,7 @@ def clear_chat_messages(
 
 
 @router.post('/v1/initial-message', tags=['chat'], response_model=Message)
-def create_initial_message(
+def create_initial_message_v1(
     plugin_id: Optional[str] = None,
     app_id: Optional[str] = None,
     uid: str = Depends(auth.with_rate_limit(auth.get_current_user_uid, "chat:initial")),
