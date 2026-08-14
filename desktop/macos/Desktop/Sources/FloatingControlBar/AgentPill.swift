@@ -2117,7 +2117,8 @@ final class AgentPillsManager: ObservableObject {
         if !trimmed.isEmpty {
           return String(trimmed.prefix(110))
         }
-      case .thinking, .discoveryCard, .questionCard, .taskCard, .goalLink, .captureLink, .memoryLink:
+      case .thinking, .discoveryCard, .questionCard, .taskCard, .goalLink, .captureLink,
+        .conversationLink, .memoryLink, .citation:
         continue
       }
     }
