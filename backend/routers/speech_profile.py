@@ -21,7 +21,7 @@ from utils.other.storage import (
 from utils.upload_temp import temp_upload_path
 from utils.multipart import MultipartMaxPartSizeRoute, SPEECH_PROFILE_MAX_PART_SIZE, max_part_size
 from utils.stt.speaker_embedding import extract_embedding
-from utils.stt.vad import apply_vad_for_speech_profile
+from utils.stt.vad import apply_vad_for_speech_profile, VADEmptyError
 import logging
 
 logger = logging.getLogger(__name__)
@@ -84,7 +84,10 @@ def _process_uploaded_speech_profile(uid: str, file: UploadFile, file_path: str)
     if aseg.duration_seconds < 5 or aseg.duration_seconds > 120:
         raise HTTPException(status_code=400, detail="Audio duration is invalid (must be 5-120 seconds)")
 
-    apply_vad_for_speech_profile(file_path)
+    try:
+        apply_vad_for_speech_profile(file_path)
+    except VADEmptyError:
+        raise HTTPException(status_code=400, detail="Audio is empty")
 
     # Write-ahead: Cache exact duration after VAD processing (use av for fast header-only read)
     with av.open(file_path) as container:
