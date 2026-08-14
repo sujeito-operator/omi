@@ -64,9 +64,19 @@ final class ContextBucketPromptAssemblerTests: XCTestCase {
       ScreenDerivedContent.untrustedPreamble,
       "Decide whether interrupting now adds concrete value. Return silence unless the validated",
       "facts support a specific, timely action. Use only supplied bucket-entry refs.",
+      "Never announce that meeting notes, a transcript, or a call summary are ready. The",
+      "conversation-finalization lane owns that claim and attaches the exact conversation link.",
       "Use resurface or suggest for an actionable open task supplied below. Entries marked",
       "reference-only are identity context: do not notify about or recreate them yet. Use",
-      "task_candidate only for a new validated commitment absent from the supplied task list.",
+      "task_candidate only when a validated fact explicitly records a new commitment, promise,",
+      "or request with an accountable action that the user personally made or accepted (first",
+      "person), and that commitment is absent from the supplied task list. A commitment made by",
+      "another person is never a task candidate, however explicit or well-dated it is; if it",
+      "genuinely bears on the user's tracked work it may at most be insight, and a commitment",
+      "between other parties that does not involve the user is silence. A material change, status",
+      "update, recommendation, or useful follow-up without an explicit commitment, promise, or",
+      "request is insight or suggest; never infer an owner or due date and never create a task",
+      "candidate from actionability alone.",
       "",
       bucket,
       "",
@@ -119,7 +129,7 @@ final class ContextBucketPromptAssemblerTests: XCTestCase {
         ContextDirectorTaskContext(
           description: "Far task", dueAt: now.addingTimeInterval(72 * 60 * 60))
       ],
-      frame: CapturedFrame(jpegData: Data(), appName: "Notes", captureTime: now))
+      frame: CapturedFrame(jpegData: Data(), appName: "Notes", frameNumber: 10, captureTime: now))
 
     XCTAssertTrue(
       prompt.contains("Reference only: already exists; do not resurface or create it yet."))
