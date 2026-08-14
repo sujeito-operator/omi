@@ -34,57 +34,6 @@ extension SettingsContentView {
 
             GlassSeparator()
 
-            settingRow(
-              title: "Active Period",
-              subtitle: SettingsControlMetrics.notificationActivePeriodSubtitle(
-                startMinute: notificationActiveStartMinute,
-                endMinute: notificationActiveEndMinute),
-              settingId: "notifications.activeperiod"
-            ) {
-              HStack(spacing: OmiSpacing.sm) {
-                if let allDayLabel = SettingsControlMetrics.notificationActivePeriodSummaryLabel(
-                  startMinute: notificationActiveStartMinute,
-                  endMinute: notificationActiveEndMinute)
-                {
-                  Text(allDayLabel)
-                    .scaledFont(size: OmiType.caption, weight: .semibold)
-                    .foregroundColor(Ink.primary)
-                    .padding(.horizontal, OmiSpacing.sm)
-                    .padding(.vertical, OmiSpacing.xxs)
-                    .background(
-                      RoundedRectangle(
-                        cornerRadius: SettingsGlassMetrics.controlRadius, style: .continuous
-                      )
-                      .fill(Ink.accent.opacity(0.16))
-                    )
-                    .accessibilityLabel("Active period is all day")
-                }
-
-                notificationActivePeriodPicker(
-                  selection: $notificationActiveStartMinute,
-                  accessibilityLabel: "Active period start"
-                )
-                .onChange(of: notificationActiveStartMinute) { _, _ in
-                  saveNotificationActivePeriod()
-                }
-
-                Image(systemName: "arrow.right")
-                  .font(.system(size: OmiType.caption, weight: .semibold))
-                  .foregroundColor(Ink.secondary)
-
-                notificationActivePeriodPicker(
-                  selection: $notificationActiveEndMinute,
-                  accessibilityLabel: "Active period end"
-                )
-                .onChange(of: notificationActiveEndMinute) { _, _ in
-                  saveNotificationActivePeriod()
-                }
-              }
-              .padding(.horizontal, OmiSpacing.sm)
-              .padding(.vertical, OmiSpacing.xs)
-              .settingsGlassWell(radius: SettingsGlassMetrics.controlRadius)
-            }
-
             // Every notification below is produced by a frame-driven assistant, so while
             // screen frames are not distributed none of them can ever fire. Hidden rather
             // than shown as dead switches; the persisted values are untouched.

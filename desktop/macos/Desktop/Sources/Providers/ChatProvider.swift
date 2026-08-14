@@ -656,7 +656,6 @@ final class ChatToolTraceInputStore: @unchecked Sendable {
 
 // MARK: - Chat Message Model
 
-
 /// A single chat message
 struct ChatMessage: Identifiable {
   var id: String  // Mutable to sync with server-generated ID
