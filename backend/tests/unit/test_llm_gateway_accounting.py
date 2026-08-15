@@ -66,6 +66,9 @@ def test_openai_usage_distinguishes_cache_hit_miss_and_unobserved_cache() -> Non
 
 
 def test_openai_usage_parses_cache_writes_and_prices_luna_write_tokens() -> None:
+    # Total input context here is 1,000,000 tokens (400K uncached + 200K
+    # cached + 400K cache-write), which is well past Luna's 272K-token
+    # long-context boundary, so this exercises the long-context rates.
     usage = openai_usage_from_response(
         {
             'id': 'chatcmpl-write',
@@ -95,9 +98,110 @@ def test_openai_usage_parses_cache_writes_and_prices_luna_write_tokens() -> None
     )
     event = build_accounting_event(_context(), attempt)
 
+    # Long-context rates: 400K uncached @ $0.40/M + 200K cached @ $0.04/M +
+    # 1M output @ $1.80/M + 400K cache-write @ $0.50/M = $2,168,000 micro-USD.
     assert event.cache_write_tokens == 400_000
-    assert event.estimated_cost_micro_usd == 1_384_000
+    assert event.estimated_cost_micro_usd == 2_168_000
     assert event.rate_card_id == 'openai.gpt-5.6-luna.2026-07-30'
+
+
+def test_short_context_luna_request_uses_short_context_rates() -> None:
+    # Same shape as the long-context test above, scaled down so total input
+    # context (150K) stays under the 272K-token boundary.
+    usage = openai_usage_from_response(
+        {
+            'id': 'chatcmpl-short',
+            'usage': {
+                'prompt_tokens': 150_000,
+                'completion_tokens': 100_000,
+                'prompt_tokens_details': {'cached_tokens': 30_000, 'cache_write_tokens': 60_000},
+            },
+        },
+        cache_requested=True,
+    ).usage
+    assert usage is not None
+    assert usage.uncached_input_tokens == 60_000
+
+    trace = AttemptTrace()
+    attempt = trace.record(
+        provider='openai',
+        configured_model='gpt-5.6-luna',
+        route_artifact_id='route.conv_action_items.model_config.001',
+        fallback_reason=None,
+        retry_ordinal=1,
+        outcome='success',
+        error_class='none',
+        metadata=ProviderResponseMetadata(usage=usage),
+    )
+    event = build_accounting_event(_context(), attempt)
+
+    # Short-context rates: 60K uncached @ $0.20/M + 30K cached @ $0.02/M +
+    # 100K output @ $1.20/M + 60K cache-write @ $0.25/M = $147,600 micro-USD.
+    assert event.estimated_cost_micro_usd == 147_600
+    assert event.rate_card_id == 'openai.gpt-5.6-luna.2026-07-30'
+
+
+def test_long_context_threshold_is_pinned_and_exclusive() -> None:
+    # The boundary is "more than 272K input tokens": exactly at 272,000 must
+    # still use the short-context rate, and 272,001 must switch to long.
+    trace = AttemptTrace()
+
+    def _priced_cost(prompt_tokens: int) -> int | None:
+        attempt = trace.record(
+            provider='openai',
+            configured_model='gpt-5.6-luna',
+            route_artifact_id='route.test.001',
+            fallback_reason=None,
+            retry_ordinal=1,
+            outcome='success',
+            error_class='none',
+            metadata=ProviderResponseMetadata(
+                usage=ProviderUsage(
+                    prompt_tokens=prompt_tokens,
+                    uncached_input_tokens=prompt_tokens,
+                    output_tokens=0,
+                    output_tokens_include_reasoning=True,
+                )
+            ),
+        )
+        return build_accounting_event(_context(), attempt).estimated_cost_micro_usd
+
+    at_boundary = _priced_cost(272_000)
+    past_boundary = _priced_cost(272_001)
+
+    # 272,000 * $0.20/M short rate = $54,400 micro-USD.
+    assert at_boundary == 54_400
+    # 272,001 * $0.40/M long rate, rounded = $108,800 micro-USD (rounds down
+    # from 108800.4).
+    assert past_boundary == 108_800
+
+
+def test_model_with_no_long_context_tier_ignores_token_count() -> None:
+    # gpt-5.4-nano has no long_context_* fields in cost_rate_cards.yaml, so
+    # even a huge prompt must keep pricing at its single (short) rate.
+    trace = AttemptTrace()
+    attempt = trace.record(
+        provider='openai',
+        configured_model='gpt-5.4-nano',
+        route_artifact_id='route.test.001',
+        fallback_reason=None,
+        retry_ordinal=1,
+        outcome='success',
+        error_class='none',
+        metadata=ProviderResponseMetadata(
+            usage=ProviderUsage(
+                prompt_tokens=5_000_000,
+                uncached_input_tokens=5_000_000,
+                output_tokens=0,
+                output_tokens_include_reasoning=True,
+            )
+        ),
+    )
+    event = build_accounting_event(_context(), attempt)
+
+    # 5,000,000 * $0.20/M (the only rate this card has) = $1,000,000.
+    assert event.estimated_cost_micro_usd == 1_000_000
+    assert event.rate_card_id == 'openai.gpt-5.4-nano.2026-07-17'
 
 
 def test_empty_usage_object_is_unreported_not_a_zero_cost_completion() -> None:

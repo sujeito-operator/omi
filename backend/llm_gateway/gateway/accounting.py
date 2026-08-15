@@ -175,6 +175,17 @@ class AccountingContext:
 
 
 @dataclass(frozen=True)
+class RateCardTier:
+    """The four-ish per-token rates that actually apply to one request."""
+
+    input_micro_usd_per_million: int
+    cached_input_micro_usd_per_million: int
+    output_micro_usd_per_million: int
+    cache_write_micro_usd_per_million: int | None
+    cache_write_1h_micro_usd_per_million: int | None
+
+
+@dataclass(frozen=True)
 class RateCard:
     rate_card_id: str
     provider: str
@@ -184,6 +195,44 @@ class RateCard:
     output_micro_usd_per_million: int
     cache_write_micro_usd_per_million: int | None = None
     cache_write_1h_micro_usd_per_million: int | None = None
+    # Some providers publish a second, more expensive price band once a
+    # request's total context crosses a token threshold (e.g. OpenAI's
+    # >272K-input-token band for the GPT-5.6 family). A card with no
+    # `long_context_threshold_tokens` has only the single tier above, and
+    # `effective_rates` always returns it regardless of token count.
+    long_context_threshold_tokens: int | None = None
+    long_context_input_micro_usd_per_million: int | None = None
+    long_context_cached_input_micro_usd_per_million: int | None = None
+    long_context_output_micro_usd_per_million: int | None = None
+    long_context_cache_write_micro_usd_per_million: int | None = None
+    long_context_cache_write_1h_micro_usd_per_million: int | None = None
+
+    def effective_rates(self, total_context_tokens: int) -> RateCardTier:
+        """Pick the short- or long-context tier for a request.
+
+        `total_context_tokens` must be the request's total prompt/input token
+        count (cached + uncached + cache-write) — never output tokens, which
+        do not affect which price band applies.
+        """
+        if (
+            self.long_context_threshold_tokens is not None
+            and total_context_tokens > self.long_context_threshold_tokens
+            and self.long_context_input_micro_usd_per_million is not None
+        ):
+            return RateCardTier(
+                input_micro_usd_per_million=self.long_context_input_micro_usd_per_million,
+                cached_input_micro_usd_per_million=self.long_context_cached_input_micro_usd_per_million or 0,
+                output_micro_usd_per_million=self.long_context_output_micro_usd_per_million or 0,
+                cache_write_micro_usd_per_million=self.long_context_cache_write_micro_usd_per_million,
+                cache_write_1h_micro_usd_per_million=self.long_context_cache_write_1h_micro_usd_per_million,
+            )
+        return RateCardTier(
+            input_micro_usd_per_million=self.input_micro_usd_per_million,
+            cached_input_micro_usd_per_million=self.cached_input_micro_usd_per_million,
+            output_micro_usd_per_million=self.output_micro_usd_per_million,
+            cache_write_micro_usd_per_million=self.cache_write_micro_usd_per_million,
+            cache_write_1h_micro_usd_per_million=self.cache_write_1h_micro_usd_per_million,
+        )
 
 
 @dataclass(frozen=True)
@@ -635,23 +684,33 @@ def _estimate_cost(
     rate_card = _rate_card_for(provider, model)
     if rate_card is None:
         return CostStatus.UNPRICED, None, None, None, 'rate_card_missing'
-    cache_write_rate = rate_card.cache_write_micro_usd_per_million
+    # The tier that applies is decided by total request context — cached,
+    # uncached, and cache-write input tokens together — never by output
+    # tokens, which some providers price at a different multiplier entirely.
+    # Built from the split fields rather than `usage.prompt_tokens` because
+    # that field's relationship to cache-write tokens differs by provider:
+    # OpenAI's raw `prompt_tokens` already includes cache-write tokens, while
+    # Anthropic's `input_tokens` (this codebase's `prompt_tokens`) excludes
+    # `cache_creation_input_tokens`. Summing the three split components is
+    # correct for both.
+    total_context_tokens = usage.uncached_input_tokens + usage.cached_input_tokens + usage.cache_write_tokens
+    rates = rate_card.effective_rates(total_context_tokens)
+    cache_write_rate = rates.cache_write_micro_usd_per_million
     if usage.cache_write_ttl == '1h':
-        cache_write_rate = rate_card.cache_write_1h_micro_usd_per_million
+        cache_write_rate = rates.cache_write_1h_micro_usd_per_million
     if usage.cache_write_tokens and (cache_write_rate is None or usage.cache_write_ttl == 'mixed'):
         return CostStatus.UNPRICED, None, None, rate_card.rate_card_id, 'cache_write_rate_missing_or_mixed_ttl'
 
     numerator = (
-        usage.uncached_input_tokens * rate_card.input_micro_usd_per_million
-        + usage.cached_input_tokens * rate_card.cached_input_micro_usd_per_million
-        + usage.billable_output_tokens * rate_card.output_micro_usd_per_million
+        usage.uncached_input_tokens * rates.input_micro_usd_per_million
+        + usage.cached_input_tokens * rates.cached_input_micro_usd_per_million
+        + usage.billable_output_tokens * rates.output_micro_usd_per_million
     )
     if cache_write_rate is not None:
         numerator += usage.cache_write_tokens * cache_write_rate
     cost = _rounded_micro_usd(numerator)
     savings = _rounded_micro_usd(
-        usage.cached_input_tokens
-        * max(rate_card.input_micro_usd_per_million - rate_card.cached_input_micro_usd_per_million, 0)
+        usage.cached_input_tokens * max(rates.input_micro_usd_per_million - rates.cached_input_micro_usd_per_million, 0)
     )
     return CostStatus.ESTIMATED, cost, savings, rate_card.rate_card_id, 'marginal_token_rates_excludes_cache_storage'
 
@@ -678,15 +737,25 @@ def _load_rate_cards() -> dict[tuple[str, str], RateCard]:
             input_micro_usd_per_million=_nonnegative_int(item.get('input_micro_usd_per_million')),
             cached_input_micro_usd_per_million=_nonnegative_int(item.get('cached_input_micro_usd_per_million')),
             output_micro_usd_per_million=_nonnegative_int(item.get('output_micro_usd_per_million')),
-            cache_write_micro_usd_per_million=(
-                _nonnegative_int(item['cache_write_micro_usd_per_million'])
-                if item.get('cache_write_micro_usd_per_million') is not None
-                else None
+            cache_write_micro_usd_per_million=_optional_nonnegative_int(item, 'cache_write_micro_usd_per_million'),
+            cache_write_1h_micro_usd_per_million=_optional_nonnegative_int(
+                item, 'cache_write_1h_micro_usd_per_million'
             ),
-            cache_write_1h_micro_usd_per_million=(
-                _nonnegative_int(item['cache_write_1h_micro_usd_per_million'])
-                if item.get('cache_write_1h_micro_usd_per_million') is not None
-                else None
+            long_context_threshold_tokens=_optional_nonnegative_int(item, 'long_context_threshold_tokens'),
+            long_context_input_micro_usd_per_million=_optional_nonnegative_int(
+                item, 'long_context_input_micro_usd_per_million'
+            ),
+            long_context_cached_input_micro_usd_per_million=_optional_nonnegative_int(
+                item, 'long_context_cached_input_micro_usd_per_million'
+            ),
+            long_context_output_micro_usd_per_million=_optional_nonnegative_int(
+                item, 'long_context_output_micro_usd_per_million'
+            ),
+            long_context_cache_write_micro_usd_per_million=_optional_nonnegative_int(
+                item, 'long_context_cache_write_micro_usd_per_million'
+            ),
+            long_context_cache_write_1h_micro_usd_per_million=_optional_nonnegative_int(
+                item, 'long_context_cache_write_1h_micro_usd_per_million'
             ),
         )
         key = (card.provider, card.model)
@@ -756,6 +825,10 @@ def _nonnegative_int(value: object) -> int:
     if isinstance(value, float):
         return max(int(value), 0)
     return 0
+
+
+def _optional_nonnegative_int(item: Mapping[str, Any], key: str) -> int | None:
+    return _nonnegative_int(item[key]) if item.get(key) is not None else None
 
 
 def _string_or_none(value: object) -> str | None:
