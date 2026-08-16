@@ -261,6 +261,64 @@ def test_a_row_with_no_model_is_grouped_rather_than_dropped(report) -> None:
     assert grouped[('unknown', '')].output_tokens == 50
 
 
+def test_long_context_attempts_are_priced_at_the_long_band(report) -> None:
+    """The gateway prices a request that crosses the card's threshold entirely
+    at the long rates, so the modeled breakdown must bucket those attempts
+    separately instead of modeling them at the short rates."""
+    card_path = BACKEND_ROOT / 'llm_gateway' / 'config' / 'cost_rate_cards.yaml'
+
+    grouped = report.build_totals_by_pricing_basis(
+        [
+            # Long-context turn: 400K uncached + 200K cached + 400K cache-write
+            # = 1M total input context — past Luna's 272K threshold. The ledger
+            # priced it at the long rates ($2,168,000 in the gateway test).
+            _row(
+                actual_model_version='gpt-5.6-luna',
+                uncached_input_tokens=400_000,
+                cached_input_tokens=200_000,
+                cache_write_tokens=400_000,
+                cache_write_ttl='30m',
+                output_tokens=1_000_000,
+                estimated_cost_micro_usd=2_168_000,
+            ),
+            # Short-context turn: 150K total input context, under the threshold.
+            _row(
+                actual_model_version='gpt-5.6-luna',
+                uncached_input_tokens=60_000,
+                cached_input_tokens=30_000,
+                cache_write_tokens=60_000,
+                cache_write_ttl='30m',
+                output_tokens=100_000,
+                estimated_cost_micro_usd=147_600,
+            ),
+        ],
+        card_path,
+    )
+
+    totals = grouped[('gpt-5.6-luna', '')]
+    assert totals.attempts_billed_long_context == 1
+    # Long attempt's tokens went to the long buckets, short attempt's stayed short.
+    assert totals.long_context_uncached_input_tokens == 400_000
+    assert totals.long_context_cached_input_tokens == 200_000
+    assert totals.long_context_cache_write_30m_tokens == 400_000
+    assert totals.long_context_output_tokens == 1_000_000
+    assert totals.uncached_input_tokens == 60_000
+    assert totals.cached_input_tokens == 30_000
+    assert totals.cache_write_30m_tokens == 60_000
+    assert totals.output_tokens == 100_000
+
+    rates = report.load_rates('gpt-5.6-luna', card_path)
+    by_name = {component.name: component for component in report.cost_components(totals, rates)}
+    # Long band: 400K @ $0.40/M = $160,000; short band: 60K @ $0.20/M = $12,000.
+    assert by_name['uncached input (long ctx)'].cost_micro_usd == 160_000
+    assert by_name['uncached input'].cost_micro_usd == 12_000
+
+    rendered = report.render(totals, rates, 'chat_agent')
+    assert 'long-context attempts' in rendered
+    # The write:read ratio stays a property of the short-band buckets.
+    assert 'write:read ratio: 2.00' in rendered
+
+
 def test_the_default_window_ends_on_the_utc_day(report, monkeypatch) -> None:
     """The ledger's date field is UTC. A local today() east or west of UTC asks for a day the
     range was never meant to cover."""

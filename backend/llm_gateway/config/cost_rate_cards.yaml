@@ -10,7 +10,11 @@
 # crosses a threshold; the higher rates then apply to the whole request, not
 # just the tokens past the boundary. A card represents this with the
 # `long_context_*` fields alongside its normal (short-context) fields; a card
-# with none of those fields is single-tier and unaffected. This is additive
+# with none of those fields is single-tier and unaffected. A long-context tier
+# must be declared completely — threshold plus the long input, cached-input, and
+# output rates — or card loading fails rather than silently billing omitted
+# components at zero. The long cache-write rates may stay unset, in which case a
+# long-context attempt that writes cache is recorded as unpriced. This is additive
 # schema, not a rate change to the short-context fields, so it does not by
 # itself require a new rate_card_id — see the OpenAI GPT-5.6 cards below for
 # the reasoning on why their existing ID was kept.

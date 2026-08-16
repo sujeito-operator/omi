@@ -204,6 +204,115 @@ def test_model_with_no_long_context_tier_ignores_token_count() -> None:
     assert event.rate_card_id == 'openai.gpt-5.4-nano.2026-07-17'
 
 
+def _write_card_file(path, card_lines: list[str]) -> None:
+    path.write_text('\n'.join(['rate_cards:', *card_lines]) + '\n', encoding='utf-8')
+
+
+def test_partially_declared_long_context_tier_is_rejected_at_load(tmp_path, monkeypatch) -> None:
+    # `effective_rates` defaults omitted long-tier rates to zero, so a card
+    # declaring only some `long_context_*` fields would silently bill cached
+    # input or output at $0 past the threshold — or, with rates but no
+    # threshold, never select the tier it half-declares. Loading must refuse it.
+    from llm_gateway.gateway import accounting
+
+    card_file = tmp_path / 'cards.yaml'
+    _write_card_file(
+        card_file,
+        [
+            '  - rate_card_id: test.partial.2026-08-16',
+            '    provider: openai',
+            '    model: partial-model',
+            '    input_micro_usd_per_million: 1000',
+            '    cached_input_micro_usd_per_million: 100',
+            '    output_micro_usd_per_million: 2000',
+            '    long_context_threshold_tokens: 272000',
+            '    long_context_input_micro_usd_per_million: 2000',
+        ],
+    )
+    monkeypatch.setattr(accounting, 'RATE_CARD_FILE', card_file)
+    accounting.clear_rate_cards_for_tests()
+    try:
+        trace = AttemptTrace()
+        attempt = trace.record(
+            provider='openai',
+            configured_model='partial-model',
+            route_artifact_id='route.test.001',
+            fallback_reason=None,
+            retry_ordinal=1,
+            outcome='success',
+            error_class='none',
+            metadata=ProviderResponseMetadata(
+                usage=ProviderUsage(
+                    prompt_tokens=100,
+                    uncached_input_tokens=100,
+                    output_tokens=0,
+                    output_tokens_include_reasoning=True,
+                )
+            ),
+        )
+        # Any pricing lookup on the malformed card file must fail loudly rather
+        # than hand back a card whose long tier silently bills at zero.
+        with pytest.raises(ValueError, match='partial long-context tier'):
+            build_accounting_event(_context(), attempt)
+    finally:
+        accounting.clear_rate_cards_for_tests()
+
+
+def test_long_context_tier_without_write_rates_prices_cache_writes_as_unpriced(tmp_path, monkeypatch) -> None:
+    # The long cache-write rates are deliberately optional: the gateway has no
+    # honest number for them, so a long-context attempt that writes cache is
+    # recorded as unpriced (like any other missing write rate) instead of being
+    # silently billed at zero or at the short-tier write rate.
+    from llm_gateway.gateway import accounting
+
+    card_file = tmp_path / 'cards.yaml'
+    _write_card_file(
+        card_file,
+        [
+            '  - rate_card_id: test.longctx.2026-08-16',
+            '    provider: openai',
+            '    model: longctx-model',
+            '    input_micro_usd_per_million: 1000',
+            '    cached_input_micro_usd_per_million: 100',
+            '    output_micro_usd_per_million: 2000',
+            '    long_context_threshold_tokens: 272000',
+            '    long_context_input_micro_usd_per_million: 2000',
+            '    long_context_cached_input_micro_usd_per_million: 200',
+            '    long_context_output_micro_usd_per_million: 4000',
+        ],
+    )
+    monkeypatch.setattr(accounting, 'RATE_CARD_FILE', card_file)
+    accounting.clear_rate_cards_for_tests()
+    try:
+        trace = AttemptTrace()
+        attempt = trace.record(
+            provider='openai',
+            configured_model='longctx-model',
+            route_artifact_id='route.test.001',
+            fallback_reason=None,
+            retry_ordinal=1,
+            outcome='success',
+            error_class='none',
+            metadata=ProviderResponseMetadata(
+                usage=ProviderUsage(
+                    prompt_tokens=300_000,
+                    uncached_input_tokens=300_000,
+                    output_tokens=100,
+                    output_tokens_include_reasoning=True,
+                    cache_write_tokens=50_000,
+                    cache_write_ttl='30m',
+                )
+            ),
+        )
+        event = build_accounting_event(_context(), attempt)
+
+        assert event.cost_status == CostStatus.UNPRICED
+        assert event.estimated_cost_micro_usd is None
+        assert event.cost_basis == 'cache_write_rate_missing_or_mixed_ttl'
+    finally:
+        accounting.clear_rate_cards_for_tests()
+
+
 def test_empty_usage_object_is_unreported_not_a_zero_cost_completion() -> None:
     metadata = openai_usage_from_response({'id': 'chatcmpl-empty', 'model': 'gpt-5.4-nano', 'usage': {}})
     trace = AttemptTrace()

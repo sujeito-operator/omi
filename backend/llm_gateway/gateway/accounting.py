@@ -758,11 +758,52 @@ def _load_rate_cards() -> dict[tuple[str, str], RateCard]:
                 item, 'long_context_cache_write_1h_micro_usd_per_million'
             ),
         )
+        _reject_incomplete_long_context_tier(item, card)
         key = (card.provider, card.model)
         if key in cards:
             raise ValueError(f'duplicate gateway rate card: {card.provider}/{card.model}')
         cards[key] = card
     return cards
+
+
+def _reject_incomplete_long_context_tier(item: Mapping[str, Any], card: RateCard) -> None:
+    """Refuse a partially-declared long-context tier at load time.
+
+    `effective_rates` defaults omitted long-tier rates to zero, so a card that
+    declares only some `long_context_*` fields would silently bill cached-input
+    or output tokens at $0 once the threshold is crossed — or, with rates but no
+    threshold, never select the tier it half-declares. Both misprice, so an
+    incomplete tier is rejected here: complete it or remove it entirely. The
+    long cache-write rates are the deliberate exception — they may stay unset,
+    and a long-context attempt that writes cache is then recorded as unpriced by
+    the existing cache-write rate guard instead of being priced at zero.
+    """
+    if not _has_any_field(
+        item,
+        'long_context_threshold_tokens',
+        'long_context_input_micro_usd_per_million',
+        'long_context_cached_input_micro_usd_per_million',
+        'long_context_output_micro_usd_per_million',
+    ):
+        return
+    missing = [
+        field_name
+        for field_name, value in (
+            ('long_context_threshold_tokens', card.long_context_threshold_tokens),
+            ('long_context_input_micro_usd_per_million', card.long_context_input_micro_usd_per_million),
+            (
+                'long_context_cached_input_micro_usd_per_million',
+                card.long_context_cached_input_micro_usd_per_million,
+            ),
+            ('long_context_output_micro_usd_per_million', card.long_context_output_micro_usd_per_million),
+        )
+        if value is None
+    ]
+    if missing:
+        raise ValueError(
+            f'rate card {card.rate_card_id} declares a partial long-context tier; '
+            f'set {" and ".join(missing)} or remove the tier entirely'
+        )
 
 
 def _rate_card_for(provider: str, model: str) -> RateCard | None:

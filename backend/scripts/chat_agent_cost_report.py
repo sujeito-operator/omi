@@ -53,6 +53,16 @@ class Rates:
     output_micro_usd: int
     cache_write_micro_usd: int
     cache_write_1h_micro_usd: int
+    # Optional second, pricier band the gateway selects per attempt once a
+    # request's total input context crosses the threshold. None on single-tier
+    # cards. The write rates may legitimately be unset, in which case the
+    # components fall back to the short-tier write rates rather than zero.
+    long_context_threshold_tokens: int | None = None
+    long_context_input_micro_usd: int | None = None
+    long_context_cached_input_micro_usd: int | None = None
+    long_context_output_micro_usd: int | None = None
+    long_context_cache_write_micro_usd: int | None = None
+    long_context_cache_write_1h_micro_usd: int | None = None
 
 
 @dataclass
@@ -71,6 +81,19 @@ class Totals:
     ledger_cost_micro_usd: int = 0
     attempts_with_cache_read: int = 0
     attempts_with_cache_write: int = 0
+    # Long-context tier buckets. The gateway prices a request whose total input
+    # context crosses the card's threshold entirely at the long rates, so those
+    # attempts' tokens are accumulated separately: folding them into the
+    # short-rate buckets would model the request at rates the ledger never
+    # applied and understate every component it touched.
+    long_context_cached_input_tokens: int = 0
+    long_context_uncached_input_tokens: int = 0
+    long_context_cache_write_5m_tokens: int = 0
+    long_context_cache_write_30m_tokens: int = 0
+    long_context_cache_write_1h_tokens: int = 0
+    long_context_cache_write_untagged_tokens: int = 0
+    long_context_output_tokens: int = 0
+    attempts_billed_long_context: int = 0
     cache_status: Counter[str] = field(default_factory=Counter)
     outcome: Counter[str] = field(default_factory=Counter)
     models: Counter[str] = field(default_factory=Counter)
@@ -95,8 +118,16 @@ def _str_field(row: Mapping[str, Any], key: str, default: str) -> str:
     return value if isinstance(value, str) and value else default
 
 
-def accumulate(totals: Totals, row: Mapping[str, Any]) -> None:
-    """Fold one ledger row into ``totals``."""
+def accumulate(totals: Totals, row: Mapping[str, Any], long_context_threshold_tokens: int | None = None) -> None:
+    """Fold one ledger row into ``totals``.
+
+    When the row's card carries a ``long_context_threshold_tokens`` and the
+    attempt's recorded total input context crossed it, the attempt's tokens go
+    to the ``long_context_*`` buckets instead — the ledger priced the whole
+    request at the long rates, so the modeled breakdown must too. The token
+    arithmetic mirrors ``_estimate_cost``: threshold input is cached + uncached
+    + cache-write input tokens, never output tokens.
+    """
     totals.attempts += 1
     totals.days.add(_str_field(row, 'date', 'unknown'))
     totals.cache_status[_str_field(row, 'cache_status', 'not_reported')] += 1
@@ -105,9 +136,21 @@ def accumulate(totals: Totals, row: Mapping[str, Any]) -> None:
 
     cached = _int_field(row, 'cached_input_tokens')
     cache_write = _int_field(row, 'cache_write_tokens')
-    totals.cached_input_tokens += cached
-    totals.uncached_input_tokens += _int_field(row, 'uncached_input_tokens')
-    totals.output_tokens += _int_field(row, 'output_tokens')
+    uncached = _int_field(row, 'uncached_input_tokens')
+    output = _int_field(row, 'output_tokens')
+    long_context = (
+        long_context_threshold_tokens is not None
+        and cached + uncached + cache_write > long_context_threshold_tokens
+    )
+    if long_context:
+        totals.attempts_billed_long_context += 1
+        totals.long_context_cached_input_tokens += cached
+        totals.long_context_uncached_input_tokens += uncached
+        totals.long_context_output_tokens += output
+    else:
+        totals.cached_input_tokens += cached
+        totals.uncached_input_tokens += uncached
+        totals.output_tokens += output
     if cached:
         totals.attempts_with_cache_read += 1
     if cache_write:
@@ -115,16 +158,28 @@ def accumulate(totals: Totals, row: Mapping[str, Any]) -> None:
 
     ttl = _str_field(row, 'cache_write_ttl', '')
     if ttl == TTL_ONE_HOUR:
-        totals.cache_write_1h_tokens += cache_write
+        if long_context:
+            totals.long_context_cache_write_1h_tokens += cache_write
+        else:
+            totals.cache_write_1h_tokens += cache_write
     elif ttl == TTL_THIRTY_MINUTES:
-        totals.cache_write_30m_tokens += cache_write
+        if long_context:
+            totals.long_context_cache_write_30m_tokens += cache_write
+        else:
+            totals.cache_write_30m_tokens += cache_write
     elif ttl == TTL_FIVE_MINUTES:
-        totals.cache_write_5m_tokens += cache_write
+        if long_context:
+            totals.long_context_cache_write_5m_tokens += cache_write
+        else:
+            totals.cache_write_5m_tokens += cache_write
     else:
         # 'mixed', absent, or an unrecognized TTL. Priced at the 1h rate below so
         # the estimate stays conservative, but reported separately because a
         # non-zero value here means the request's breakpoints disagree.
-        totals.cache_write_untagged_tokens += cache_write
+        if long_context:
+            totals.long_context_cache_write_untagged_tokens += cache_write
+        else:
+            totals.cache_write_untagged_tokens += cache_write
 
     cost = row.get('estimated_cost_micro_usd')
     if isinstance(cost, int) and not isinstance(cost, bool) and cost >= 0:
@@ -144,8 +199,17 @@ class Component:
 
 
 def cost_components(totals: Totals, rates: Rates) -> list[Component]:
-    """Split spend into the components a change can actually move."""
+    """Split spend into the components a change can actually move.
+
+    Long-context attempts are priced at their own rates because the ledger
+    priced the whole request at the long band. The long cache-write rates may
+    legitimately be unset (the gateway then records the attempt as unpriced
+    rather than billing writes at zero); the breakdown keeps those tokens
+    visible by pricing them at the card's short-tier write rates, which stays
+    conservative relative to the 2x-long write band.
+    """
     untagged_and_1h = totals.cache_write_1h_tokens + totals.cache_write_untagged_tokens
+    long_untagged_and_1h = totals.long_context_cache_write_1h_tokens + totals.long_context_cache_write_untagged_tokens
     return [
         Component(
             'cached input (read)',
@@ -167,6 +231,51 @@ def cost_components(totals: Totals, rates: Rates) -> list[Component]:
             _cost(totals.cache_write_5m_tokens, rates.cache_write_micro_usd),
         ),
         Component('output', totals.output_tokens, _cost(totals.output_tokens, rates.output_micro_usd)),
+        Component(
+            'cached input (long ctx)',
+            totals.long_context_cached_input_tokens,
+            _cost(totals.long_context_cached_input_tokens, rates.long_context_cached_input_micro_usd or 0),
+        ),
+        Component(
+            'uncached input (long ctx)',
+            totals.long_context_uncached_input_tokens,
+            _cost(totals.long_context_uncached_input_tokens, rates.long_context_input_micro_usd or 0),
+        ),
+        Component(
+            'cache write 30m (long ctx)',
+            totals.long_context_cache_write_30m_tokens,
+            _cost(
+                totals.long_context_cache_write_30m_tokens,
+                rates.long_context_cache_write_micro_usd
+                if rates.long_context_cache_write_micro_usd is not None
+                else rates.cache_write_micro_usd,
+            ),
+        ),
+        Component(
+            'cache write 1h (long ctx)',
+            long_untagged_and_1h,
+            _cost(
+                long_untagged_and_1h,
+                rates.long_context_cache_write_1h_micro_usd
+                if rates.long_context_cache_write_1h_micro_usd is not None
+                else rates.cache_write_1h_micro_usd,
+            ),
+        ),
+        Component(
+            'cache write 5m (long ctx)',
+            totals.long_context_cache_write_5m_tokens,
+            _cost(
+                totals.long_context_cache_write_5m_tokens,
+                rates.long_context_cache_write_micro_usd
+                if rates.long_context_cache_write_micro_usd is not None
+                else rates.cache_write_micro_usd,
+            ),
+        ),
+        Component(
+            'output (long ctx)',
+            totals.long_context_output_tokens,
+            _cost(totals.long_context_output_tokens, rates.long_context_output_micro_usd or 0),
+        ),
     ]
 
 
@@ -188,6 +297,13 @@ def write_read_ratio(totals: Totals) -> float | None:
         + totals.cache_write_untagged_tokens
     )
     return writes / reads
+
+
+def _optional_card_int(card: Mapping[str, Any], key: str) -> int | None:
+    value = card.get(key)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
 
 
 def load_rates(model: str, rate_card_path: Path, *, rate_card_id: str = '') -> Rates:
@@ -225,6 +341,16 @@ def load_rates(model: str, rate_card_path: Path, *, rate_card_id: str = '') -> R
             # explicit fields still prices writes instead of dropping them.
             cache_write_micro_usd=int(card.get('cache_write_micro_usd_per_million', round(input_rate * 1.25))),
             cache_write_1h_micro_usd=int(card.get('cache_write_1h_micro_usd_per_million', input_rate * 2)),
+            long_context_threshold_tokens=_optional_card_int(card, 'long_context_threshold_tokens'),
+            long_context_input_micro_usd=_optional_card_int(card, 'long_context_input_micro_usd_per_million'),
+            long_context_cached_input_micro_usd=_optional_card_int(
+                card, 'long_context_cached_input_micro_usd_per_million'
+            ),
+            long_context_output_micro_usd=_optional_card_int(card, 'long_context_output_micro_usd_per_million'),
+            long_context_cache_write_micro_usd=_optional_card_int(card, 'long_context_cache_write_micro_usd_per_million'),
+            long_context_cache_write_1h_micro_usd=_optional_card_int(
+                card, 'long_context_cache_write_1h_micro_usd_per_million'
+            ),
         )
     wanted = f'rate card id {rate_card_id!r}' if rate_card_id else f'model {model!r}'
     raise LookupError(f'no rate card for {wanted} in {rate_card_path}')
@@ -277,6 +403,11 @@ def render(totals: Totals, rates: Rates, feature: str) -> str:
     lines.append(f'rate card: {rates.rate_card_id}')
     lines.append('')
     lines.append(f'attempts: {totals.attempts:,}')
+    if totals.attempts_billed_long_context:
+        lines.append(
+            f'  long-context attempts (billed at the long rates): {totals.attempts_billed_long_context:,} '
+            f'{_pct(totals.attempts_billed_long_context, totals.attempts)}'
+        )
     for name, count in totals.outcome.most_common():
         lines.append(f'  outcome {name:<24} {count:>10,}  {_pct(count, totals.attempts)}')
     lines.append('')
@@ -330,10 +461,17 @@ def render(totals: Totals, rates: Rates, feature: str) -> str:
     return '\n'.join(lines)
 
 
-def build_totals(rows: Iterable[Mapping[str, Any]]) -> Totals:
+def build_totals(rows: Iterable[Mapping[str, Any]], long_context_threshold_tokens: int | None = None) -> Totals:
+    """Accumulate rows, optionally assigning each to the tier the ledger used.
+
+    ``long_context_threshold_tokens`` is the card's threshold: rows whose total
+    input context crossed it are accumulated into the ``long_context_*`` buckets
+    (see :func:`accumulate`). It is optional so bare aggregation tests can fold
+    rows without a card, exactly like the pre-tier behavior.
+    """
     totals = Totals()
     for row in rows:
-        accumulate(totals, row)
+        accumulate(totals, row, long_context_threshold_tokens)
     return totals
 
 
@@ -353,18 +491,48 @@ def row_pricing_basis(row: Mapping[str, Any]) -> tuple[str, str]:
     return row_model(row), _str_field(row, 'rate_card_id', '')
 
 
-def build_totals_by_pricing_basis(rows: Iterable[Mapping[str, Any]]) -> dict[tuple[str, str], Totals]:
+def build_totals_by_pricing_basis(rows: Iterable[Mapping[str, Any]], card_path: Path | None = None) -> dict[
+    tuple[str, str], Totals
+]:
     """Group the range by the basis each attempt was actually priced on.
 
     One rate card cannot price a range that spans a routing change or a price revision, and
     `chat_agent` has already moved provider once. Pricing every attempt at whatever is current
     today would silently misattribute every component for every attempt served before the
     switch — so the range is split and each group is priced on its own recorded basis.
+
+    When ``card_path`` is given, each group is also folded with its card's
+    ``long_context_threshold_tokens``, so attempts the ledger billed at the
+    long-context band land in long-tier buckets rather than being modeled at
+    short rates.
     """
     grouped: dict[tuple[str, str], Totals] = {}
+    thresholds: dict[tuple[str, str], int | None] = {}
     for row in rows:
-        accumulate(grouped.setdefault(row_pricing_basis(row), Totals()), row)
+        basis = row_pricing_basis(row)
+        if basis not in grouped:
+            grouped[basis] = Totals()
+            thresholds[basis] = _threshold_for_basis(basis, card_path)
+        accumulate(grouped[basis], row, thresholds[basis])
     return grouped
+
+
+def _threshold_for_basis(basis: tuple[str, str], card_path: Path | None) -> int | None:
+    """The long-context threshold of the card this basis was priced on, if any.
+
+    Best-effort: an unreadable card file or a missing card is reported later,
+    when the same lookup is retried to price the group. Grouping must not abort
+    the report for a card problem the pricing pass will surface anyway.
+    """
+    if card_path is None:
+        return None
+    import yaml
+
+    model, rate_card_id = basis
+    try:
+        return load_rates(model, card_path, rate_card_id=rate_card_id).long_context_threshold_tokens
+    except (LookupError, OSError, yaml.YAMLError):
+        return None
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -422,7 +590,7 @@ def main(argv: Sequence[str] | None = None, *, get_client: Callable[[], Any] | N
 
         get_client = get_firestore_client
 
-    grouped = build_totals_by_pricing_basis(fetch_rows(get_client(), args.feature, days))
+    grouped = build_totals_by_pricing_basis(fetch_rows(get_client(), args.feature, days), card_path)
     if not grouped:
         print(render(Totals(), Rates('none', 0, 0, 0, 0, 0), args.feature))
         return 0
