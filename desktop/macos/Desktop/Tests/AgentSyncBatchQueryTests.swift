@@ -302,8 +302,7 @@ final class AgentSyncBatchQueryTests: XCTestCase {
     await ownerFixture.establish(authOwnerID: "agent-sync-cursor-owner")
     defer { Task { await ownerFixture.restore() } }
     let cursorKey = "agentSync_cursors.agent-sync-cursor-owner"
-    let seeded = try? JSONEncoder().encode(
-      ["memories": ["lastId": 42, "lastUpdatedAt": "2026-01-01T00:00:00"]] as [String: [String: Any]])
+    let seeded = #"{"memories":{"lastId":42,"lastUpdatedAt":"2026-01-01T00:00:00"}}"#.data(using: .utf8)
     UserDefaults.standard.set(seeded, forKey: cursorKey)
     defer { UserDefaults.standard.removeObject(forKey: cursorKey) }
 
