@@ -18,6 +18,7 @@ These rules apply to every AI agent working in this repository. This file is **h
 | Firmware (`omi/firmware/`) | `omi/firmware/AGENTS.md` — release workflow |
 | Product behavior | `PRODUCT.md` + `docs/product/invariants/` — locked invariants and guard tests |
 | Fallback/fail-open branches | `docs/agents/fallback-telemetry.md` — when to call `record_fallback` |
+| Screen-derived work memory | `docs/agents/context-buckets.md` — capture/sync boundary, what never leaves the device |
 | App flows / E2E | `app/e2e/SKILL.md`, `desktop/macos/e2e/SKILL.md` |
 | Cursor Cloud VM (Linux x86) | `.cursor/cloud-agent-environment.md` — hermetic E2E harness, known failures |
 
