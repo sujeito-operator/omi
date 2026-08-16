@@ -93,6 +93,27 @@ def test_ready_fails_closed_on_schema_validation_error(monkeypatch):
     assert response.json()['detail'] == 'llm gateway config is invalid'
 
 
+def test_ready_never_leaks_key_material_or_fingerprints(monkeypatch):
+    monkeypatch.setenv('LLM_GATEWAY_SERVICE_TOKEN', 'shared-secret')
+    secret = 'sk-or-never-log-this-raw-key-9173'
+    monkeypatch.setenv('OPENROUTER_API_KEY', secret)
+    monkeypatch.setenv('OPENAI_API_KEY', 'sk-openai-never-log-this-too')
+    monkeypatch.setattr(health, '_managed_openrouter_chat_enabled', lambda _config: True)
+    monkeypatch.setattr(health, '_managed_openai_chat_enabled', lambda _config: False)
+
+    response = TestClient(app).get('/ready', headers=auth_headers())
+    body = str(response.json())
+
+    assert response.status_code == 200
+    assert secret not in body
+    assert secret[:12] not in body
+    assert 'OPENROUTER_API_KEY' not in body
+    assert 'OPENAI_API_KEY' not in body
+    assert 'forwarded_provider_keys' not in body
+    # Readiness reports provider routing state, never credentials.
+    assert response.json()['managed_chat_provider'] == 'openrouter'
+
+
 def auth_headers() -> dict[str, str]:
     return {
         'authorization': 'Bearer shared-secret',

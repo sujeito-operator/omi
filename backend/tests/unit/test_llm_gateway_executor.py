@@ -22,6 +22,7 @@ from llm_gateway.gateway.executor import (
     provider_request_for,
     selected_serving_route_artifact_id,
 )
+from llm_gateway.gateway.executor import _provider_ref_for_credentials
 from llm_gateway.gateway.providers import FakeChatCompletionProvider, ProviderFailure, fake_success_response
 from llm_gateway.gateway.resolver import resolve_chat_completion_route
 from llm_gateway.gateway.schemas import (
@@ -104,6 +105,32 @@ async def test_byok_openrouter_openai_route_uses_forwarded_openai_provider():
     assert result.selected_provider == 'openai'
     assert provider.calls[0].provider == 'openai'
     assert provider.calls[0].model == 'gpt-5.6-luna'
+
+
+@pytest.mark.parametrize(
+    'bracketed_byok_keys, expect_remap',
+    [
+        ([], False),
+        (['anthropic'], False),
+        (['openai'], True),
+    ],
+)
+def test_provider_ref_for_credentials_remaps_openrouter_openai_to_direct_openai(bracketed_byok_keys, expect_remap):
+    ref = ProviderRef(provider='openrouter', model='openai/gpt-5.6-luna')
+    creds = build_byok_credential_context(
+        ServiceCaller(name='backend'),
+        {p: 'sk-openai' for p in bracketed_byok_keys},
+    )
+    effective = _provider_ref_for_credentials(ref, creds)
+    assert effective.provider == ('openai' if expect_remap else 'openrouter')
+    assert effective.model == ('gpt-5.6-luna' if expect_remap else 'openai/gpt-5.6-luna')
+
+
+def test_provider_ref_for_credentials_non_byok_managed_never_remaps():
+    ref = ProviderRef(provider='openrouter', model='openai/gpt-5.6-luna')
+    creds = build_omi_managed_credential_context(ServiceCaller(name='backend'))
+    effective = _provider_ref_for_credentials(ref, creds)
+    assert effective == ref
 
 
 def test_openrouter_openai_luna_route_sanitizes_gpt56_options():
